@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=67.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oil_regime_model"
+version = "0.1.0"
+description = "Explorador interactivo del modelo estructural del precio del petróleo bajo stress de oferta"
+authors = [
+    { name = "Banco Central de Chile, División de Política Monetaria" }
+]
+readme = "README.md"
+license = { text = "CC-BY-4.0" }
+requires-python = ">=3.9"
+
+dependencies = [
+    "streamlit>=1.28.0",
+    "numpy>=1.24.0",
+    "scipy>=1.11.0",
+    "matplotlib>=3.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+]
+
+[project.urls]
+Homepage = "https://www.bcentral.cl/"
+
+[tool.setuptools]
+packages = ["model", "app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
