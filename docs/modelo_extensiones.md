@@ -14,7 +14,7 @@ implicaciones de la extensión correspondiente.
 El paper original define θ implícito por despeje desde el precio observado.
 Dadas `P_mercado` y `P(h)` del modelo, se resuelve
 
-$$\theta = \frac{P(h) - P_{\text{mercado}}}{P(h) - P^*}$$
+$$\theta = \frac{P(h) - P_{\text{mercado}}}{P(h) - P^{*}}$$
 
 interpretado como la probabilidad implícita de normalización que el mercado
 está priciendo. Esta dirección es **diagnóstica**: lee el wedge y lo traduce
@@ -26,7 +26,7 @@ La extensión usa la **dirección inversa**: dado un θ exógeno (que puede
 representar un escenario, una creencia agregada, o un supuesto de stress
 test), se computa el precio esperado por el mercado:
 
-$$P_{\rm esp}(h) = (1 - \theta) \cdot P(h) + \theta \cdot P^*(h)$$
+$$P_{\rm esp}(h) = (1 - \theta) \cdot P(h) + \theta \cdot P^{*}(h)$$
 
 ### Uso
 
@@ -158,7 +158,7 @@ Propiedades:
 
 **Equilibrio "Ormuz abierto" con reposición:**
 
-$$D(P^*) + R_{\rm repl}(\text{Stock}) = S_{\rm open}(P^*)$$
+$$D(P^{*}) + R_{\rm repl}(\text{Stock}) = S_{\rm open}(P^{*})$$
 
 donde D y S_open son las curvas con elasticidad constante calibradas en el
 paper original (S_open evaluada con la oferta plena pre-shock, no la oferta
@@ -182,14 +182,14 @@ root-finding. En `R_repl = 0` se recupera `P* = P*_ref` del paper original.
 
 2. El precio esperado se actualiza a:
 
-   $$P_{\rm esp}(h) = (1 - \theta) \cdot P(h) + \theta \cdot P^*(h)$$
+   $$P_{\rm esp}(h) = (1 - \theta) \cdot P(h) + \theta \cdot P^{*}(h)$$
 
    con `P*(h)` variable. Ambos lados del promedio dependen de h.
 
 3. θ implícito se recalcula contra `P*(h_actual)` en lugar de `P*_ref`
    constante:
 
-   $$\theta_{\rm imp} = \frac{P(h) - P_{\text{mercado}}}{P(h) - P^*(h)}$$
+   $$\theta_{\rm imp} = \frac{P(h) - P_{\text{mercado}}}{P(h) - P^{*}(h)}$$
 
 ### Interpretación económica
 
