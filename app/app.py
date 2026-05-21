@@ -18,6 +18,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from scipy.integrate import solve_ivp
+from scipy.optimize import brentq
 
 # Importa el modelo
 from model import (
@@ -109,6 +110,25 @@ stock_floor = st.sidebar.slider(
     help="Mínimo operacional según JPMorgan. Mapea a h = 0."
 )
 
+st.sidebar.subheader("Demanda de reposición (Ormuz abierto)")
+stock_opt = st.sidebar.slider(
+    "Stock óptimo (mb)", 7500.0, 9000.0, 8200.0, 10.0,
+    help=(
+        "Nivel objetivo de inventarios post-acumulación. Default: 8.200 mb "
+        "(enero 2026, pre-shock). Si Ormuz se reabre con stocks por debajo "
+        "de este nivel, hay demanda extra para reponer."
+    ),
+)
+R_repl_max = st.sidebar.slider(
+    "R_repl_max (mb/d, saturación)", 0.0, 15.0, 5.0, 0.5,
+    help=(
+        "Saturación de la tasa de reposición cuando Stock = Stock_floor. "
+        "Default 5 mb/d: en el stock actual (~7.951 mb) da ~0.9 mb/d, "
+        "alineado con las estimaciones de mayo/junio. R_repl baja "
+        "linealmente hasta cero al alcanzar Stock_opt."
+    ),
+)
+
 st.sidebar.subheader("Observación de mercado")
 P_observed = st.sidebar.slider(
     "P observado (USD/bbl)", 60.0, 200.0, 114.0, 1.0,
@@ -140,6 +160,41 @@ def stock_from_h(h: float, stock_floor: float, stock_stress: float,
     return stock_floor + h * (stock_stress - stock_floor) / h_star
 
 
+# --- Demanda de reposición (solo opera con Ormuz abierto) ---
+
+def replenishment_rate(stock: float, stock_opt: float, stock_floor: float,
+                       R_repl_max: float) -> float:
+    """Tasa de reposición de inventarios cuando Ormuz está abierto.
+
+    Lineal saturada:
+        R_repl(Stock) = R_repl_max · clamp((Stock_opt - Stock) /
+                                            (Stock_opt - Stock_floor), 0, 1)
+    """
+    if stock_opt <= stock_floor:
+        return 0.0
+    gap_norm = (stock_opt - stock) / (stock_opt - stock_floor)
+    return R_repl_max * max(0.0, min(1.0, gap_norm))
+
+
+def P_star_open(R_repl: float, params: ModelParams) -> float:
+    """Precio de equilibrio con Ormuz abierto y demanda de reposición.
+
+    Equilibrio: D(P) + R_repl = S_open(P), donde
+        D(P)      = D_0 · (P/P*)^(-ε_d)
+        S_open(P) = D_0 · (P/P*)^(ε_s)
+
+    En R_repl = 0 da exactamente params.P_star.
+    """
+    if R_repl <= 0:
+        return params.P_star
+
+    def f(P):
+        return (params.D_0 * (P / params.P_star) ** (-params.eps_d) + R_repl
+                - params.D_0 * (P / params.P_star) ** params.eps_s)
+
+    return brentq(f, 30, 2000)
+
+
 # --- Cómputo: figura 1 (h, P) ---
 
 params = ModelParams(
@@ -155,7 +210,15 @@ P_C_arr = np.array([P_classical(h, params) for h in h_grid])
 P_R_arr = np.array([P_run(h, params) for h in h_grid])
 q_arr = np.array([q_run(h, params) for h in h_grid])
 P_arr = (1 - q_arr) * P_C_arr + q_arr * P_R_arr
-P_expected_arr = (1 - theta_user) * P_arr + theta_user * P_star
+
+# Stock(h) y P*(h) con demanda de reposición
+stock_grid = np.array([stock_from_h(h, stock_floor, stock_stress, h_star)
+                       for h in h_grid])
+R_repl_arr = np.array([replenishment_rate(s, stock_opt, stock_floor, R_repl_max)
+                       for s in stock_grid])
+P_star_open_arr = np.array([P_star_open(r, params) for r in R_repl_arr])
+
+P_expected_arr = (1 - theta_user) * P_arr + theta_user * P_star_open_arr
 
 P_cap_val = P_cap(params)
 P_floor_val = P_floor(params)
@@ -163,8 +226,15 @@ P_C_actual = P_classical(h_actual, params)
 P_R_actual = P_run(h_actual, params)
 q_actual = q_run(h_actual, params)
 P_model_actual = (1 - q_actual) * P_C_actual + q_actual * P_R_actual
-P_expected_actual = (1 - theta_user) * P_model_actual + theta_user * P_star
-theta = theta_implicit(P_model_actual, P_observed, params)
+
+R_repl_actual = replenishment_rate(stock_actual, stock_opt, stock_floor, R_repl_max)
+P_star_open_actual = P_star_open(R_repl_actual, params)
+P_expected_actual = (1 - theta_user) * P_model_actual + theta_user * P_star_open_actual
+
+# θ implícito ajustado por P*(h_actual) en vez de P* constante:
+#     θ = (P_model - P_observed) / (P_model - P*(h))
+_denom = P_model_actual - P_star_open_actual
+theta = (P_model_actual - P_observed) / _denom if abs(_denom) > 1e-9 else 0.0
 
 
 # --- Cómputo: figura 2 (tiempo, P) ---
@@ -193,7 +263,12 @@ P_C_t = np.array([P_classical(h, params) for h in h_t_safe])
 P_R_t = np.array([P_run(h, params) for h in h_t_safe])
 q_t = np.array([q_run(h, params) for h in h_t_safe])
 P_t = (1 - q_t) * P_C_t + q_t * P_R_t
-P_expected_t = (1 - theta_user) * P_t + theta_user * P_star
+
+R_repl_t = np.array([replenishment_rate(s, stock_opt, stock_floor, R_repl_max)
+                     for s in stock_t])
+P_star_open_t = np.array([P_star_open(r, params) for r in R_repl_t])
+
+P_expected_t = (1 - theta_user) * P_t + theta_user * P_star_open_t
 
 dates_t = [t_obs_date + timedelta(days=int(d)) for d in t_days]
 
@@ -286,7 +361,7 @@ def _merged(defaults: dict, overrides: dict | None) -> dict:
 def make_hP_figure(
     figsize=(10, 6), dpi=110,
     show_classical=True, show_run=True, show_composite=True,
-    show_expected=True, show_normalized=False, show_observed=True,
+    show_expected=True, show_normalized=True, show_observed=True,
     show_band=True, show_reference_lines=True,
     xlim=None, ylim=None,
     title=None, xlabel=None, ylabel=None,
@@ -324,7 +399,7 @@ def make_hP_figure(
     if show_run:        _plot("run", h_grid, P_R_arr)
     if show_composite:  _plot("composite", h_grid, P_arr)
     if show_expected:   _plot("expected", h_grid, P_expected_arr)
-    if show_normalized: _plot("normalized", h_grid, np.full_like(h_grid, P_star))
+    if show_normalized: _plot("normalized", h_grid, P_star_open_arr)
 
     if show_observed:
         ax.scatter([h_actual], [P_observed], s=100,
@@ -357,7 +432,7 @@ def make_hP_figure(
 def make_time_figure(
     figsize=(10, 6), dpi=110,
     show_classical=True, show_run=True, show_composite=True,
-    show_expected=True, show_normalized=False, show_observed=True,
+    show_expected=True, show_normalized=True, show_observed=True,
     show_reference_lines=True,
     xlim=None, ylim=None,
     title=None, xlabel=None, ylabel=None,
@@ -389,7 +464,7 @@ def make_time_figure(
     if show_run:        _plot("run", dates_t, P_R_t)
     if show_composite:  _plot("composite", dates_t, P_t)
     if show_expected:   _plot("expected", dates_t, P_expected_t)
-    if show_normalized: _plot("normalized", dates_t, np.full(len(dates_t), P_star))
+    if show_normalized: _plot("normalized", dates_t, P_star_open_t)
 
     if show_observed:
         ax.scatter([t_obs_date], [P_observed], s=100,
@@ -464,9 +539,10 @@ def customize_and_export(
                 show_composite = st.checkbox("P composite", True, key=f"{key_prefix}_cm")
                 show_expected = st.checkbox("P esperado", True, key=f"{key_prefix}_e")
                 show_normalized = st.checkbox(
-                    "P* (Ormuz abierto)", False, key=f"{key_prefix}_n",
+                    "P* (Ormuz abierto)", True, key=f"{key_prefix}_n",
                     help="Precio de equilibrio si el shock se resuelve. "
-                         "Constante en h (no depende del buffer slack).",
+                         "Sube cuando el stock está por debajo del óptimo "
+                         "por la demanda de reposición.",
                 )
             with cB:
                 show_observed = st.checkbox("Punto observado", True, key=f"{key_prefix}_o")
@@ -684,6 +760,12 @@ with col2:
     small_metric("P_C(h)", f"${P_C_actual:.1f}/bbl")
     small_metric("P_R(h)", f"${P_R_actual:.1f}/bbl")
     small_metric("P modelo (composite)", f"${P_model_actual:.1f}/bbl")
+    small_metric("R_repl(stock)", f"{R_repl_actual:.2f} mb/d")
+    small_metric(
+        "P* (Ormuz abierto, con reposición)",
+        f"${P_star_open_actual:.1f}/bbl",
+        delta=f"(+${P_star_open_actual - P_star:.1f} vs P* sin reposición)",
+    )
     small_metric(
         f"P esperado (θ={theta_user:.2f})", f"${P_expected_actual:.1f}/bbl",
         delta=f"(vs observado: ${P_expected_actual - P_observed:+.1f})",
@@ -768,11 +850,18 @@ El modelo separa dos equilibrios posibles para cada nivel de stock:
   holders retienen masivamente inventario anticipando que los otros también
   lo harán → precios disparados.
 
+> **Importante**: el composite $P(h)$ es un **promedio en un punto** entre
+> ambos regímenes, ponderado por la probabilidad de cada uno. **No es** una
+> trayectoria temporal donde "eventualmente se produce una corrida". La
+> corrida es un equilibrio alternativo, no un evento futuro garantizado; lo
+> que cambia con $h$ es la **probabilidad** de estar en uno u otro régimen.
+
 ### El buffer slack $h$ y su mapeo a stock observado
 
-$h \in [0, \infty)$ es una medida adimensional del **colchón de inventario disponible
-para release** (cuán lejos estamos del piso operacional). Lo mapeamos linealmente
-con el Total Global Observed Inventories (IEA OMR):
+$h \in [0, \infty)$ es una medida **adimensional** del colchón de inventario
+disponible para release — **no son los inventarios directamente**, sino una
+variable abstracta del modelo. La conexión con el stock real (en mb) la hace
+nuestro mapeo lineal con el Total Global Observed Inventories (IEA OMR):
 
 - Stock al **operational floor** (JPM ≈ 6.800 mb) → $h = 0$ (sin colchón)
 - Stock al **stress threshold** (JPM ≈ 7.600 mb) → $h = h^*$ (umbral global game)
@@ -799,13 +888,32 @@ El modelo asume que **el shock es persistente** (Ormuz no se reabre). En la
 realidad, el mercado pricea una probabilidad $\theta$ de que el shock se
 resuelva. Por eso el precio observado suele ser menor al $P(h)$ del modelo:
 
-$$P_{\rm esp}(h) = (1-\theta)\,P(h) + \theta\,P^*$$
+$$P_{\rm esp}(h) = (1-\theta)\,P(h) + \theta\,P^*(h)$$
 
 - **Slider $\theta$**: movelo hasta que la curva azul punteada calce con el
   punto observado. Ese $\theta$ es la probabilidad implícita de normalización
   que el mercado está priciendo.
 - **$\theta$ implícito** en la tabla derecha: idem, pero calculado de forma
   cerrada por despeje a partir de $P_{\rm observado}$.
+
+### Por qué $P^*$ depende de $h$ (demanda de reposición)
+
+Cuando Ormuz se reabre con inventarios por debajo del nivel óptimo
+(default 8.200 mb), aparece una **demanda extra para reponer**. Modelamos
+esa tasa $R_{\rm repl}$ como lineal saturada:
+
+$$R_{\rm repl}(\text{Stock}) = R_{\rm repl,max} \cdot
+  \text{clamp}\!\left(\tfrac{\text{Stock}_{\rm opt} - \text{Stock}}
+  {\text{Stock}_{\rm opt} - \text{Stock}_{\rm floor}},\ 0,\ 1\right)$$
+
+El equilibrio "Ormuz abierto" pasa a ser
+$D(P^*) + R_{\rm repl} = S_{\rm open}(P^*)$, lo que sube $P^*$ por encima
+del precio pre-shock $P^*_{\rm ref} = 70$. Como $R_{\rm repl}$ crece a
+medida que $h$ baja (porque Stock baja), la curva violeta $P^*(h)$ tiene
+**pendiente positiva hacia la izquierda**.
+
+Con la calibración default ($\varepsilon_d = \varepsilon_s = 0{,}05$), cada
+1 mb/d de reposición sube $P^*$ unos ~7 USD/bbl.
 
 ### Cómo leer la figura $(h, P)$
 
@@ -816,20 +924,43 @@ $$P_{\rm esp}(h) = (1-\theta)\,P(h) + \theta\,P^*$$
 - **Curva negra** $P(h)$: composite ponderado por $q(h)$.
 - **Curva azul punteada** $P_{\rm esp}(h)$: composite descontado por la prob.
   $\theta$ de normalización.
-- **Curva violeta dash-dot** $P^*$ (opcional): precio en el mundo
-  contrafactual donde Ormuz se reabre. **Constante en $h$** porque, una vez
-  restablecida la oferta, el buffer slack ya no determina el precio. Se
-  enciende desde el tab "Elementos" del panel de personalización. La curva
-  azul $P_{\rm esp}$ es exactamente el promedio ponderado entre la negra
-  $P(h)$ y esta violeta.
+- **Curva violeta dash-dot** $P^*(h)$ (opcional): precio en el mundo
+  contrafactual donde Ormuz se reabre. **Tiene pendiente positiva hacia la
+  izquierda** porque a menor stock, mayor la demanda de reposición y mayor
+  $P^*$. Se enciende desde el tab "Elementos" del panel de personalización.
+  La curva azul $P_{\rm esp}$ es exactamente el promedio ponderado entre
+  la negra $P(h)$ y esta violeta.
 - **Banda naranja**: zona de fragilidad $[h^* - 2\sigma, h^* + 2\sigma]$.
 - **Punto azul**: precio observado actual.
 
 ### Cómo leer la figura temporal $(t, P)$
 
-Asume shock persistente. El stock se drena según $dStock/dt = -\dot R(h(Stock))$,
-y se grafica el precio de equilibrio a lo largo de 365 días. La columna derecha
-indica cuándo se cruzan los umbrales (stress y floor) bajo esa trayectoria.
+La trayectoria se construye **asumiendo Ormuz cerrado durante todo el
+horizonte**: el stock se drena según $dStock/dt = -\dot R(h(Stock))$ por
+365 días. Para cada fecha $t$, las curvas se evalúan al stock vigente en
+ese instante.
+
+Cómo interpretar cada curva en este contexto:
+
+- **Curva negra $P(t)$**: el composite "si Ormuz sigue cerrado en t". Es
+  la **upper bound** condicional a no-apertura — lo que costaría el barril
+  si el mercado supiera con certeza que el shock continúa.
+- **Curva violeta $P^*(t)$**: "si llego al día t con Ormuz cerrado y justo
+  ese día se abre". Sube con $t$ porque mientras más se drenó el stock,
+  mayor la demanda de reposición. Es la **lower bound** condicional a
+  apertura.
+- **Curva azul $P_{\rm esp}(t)$**: lo que **el mercado realmente paga
+  hoy**, combinando ambas expectativas con peso $\theta$. Es la curva
+  empíricamente relevante.
+
+> **Sobre $\theta$ en la fig 2**: el slider mantiene $\theta$ **constante a
+> lo largo de todo el horizonte**. El modelo no condiciona $\theta(t)$ al
+> paso del tiempo — no decae aunque pasen meses sin apertura, ni sube
+> aunque el stock se acerque al floor. Endogenizar $\theta(t)$ sería una
+> extensión natural pero no está implementada.
+
+La columna derecha indica cuándo se cruzan los umbrales (stress y floor)
+bajo la trayectoria de drenaje.
 
 ### Personalizar las figuras para una presentación
 
@@ -860,10 +991,21 @@ with st.expander("Ecuaciones del modelo"):
     st.latex(r"P(h) = (1-q(h))\,P_C(h) + q(h)\,P_R(h)")
 
     st.markdown("**Precio esperado por el mercado (descontando normalización):**")
-    st.latex(r"P_{\rm esp}(h) = (1-\theta)\,P(h) + \theta\,P^*")
+    st.latex(r"P_{\rm esp}(h) = (1-\theta)\,P(h) + \theta\,P^*(h)")
 
-    st.markdown("**Probabilidad implícita de normalización (despeje):**")
-    st.latex(r"\theta = \frac{P(h) - P_{\text{mercado}}}{P(h) - P^*}")
+    st.markdown("**Probabilidad implícita de normalización (despeje, "
+                "usando $P^*$ al stock actual):**")
+    st.latex(r"\theta = \frac{P(h) - P_{\text{mercado}}}{P(h) - P^*(h)}")
+
+    st.markdown("**Demanda de reposición (solo activa con Ormuz abierto):**")
+    st.latex(
+        r"R_{\rm repl}(\text{Stock}) = R_{\rm repl,max} \cdot "
+        r"\text{clamp}\!\left(\tfrac{\text{Stock}_{\rm opt} - \text{Stock}}"
+        r"{\text{Stock}_{\rm opt} - \text{Stock}_{\rm floor}},\,0,\,1\right)"
+    )
+
+    st.markdown("**Equilibrio con Ormuz abierto:**")
+    st.latex(r"D(P^*) + R_{\rm repl}(\text{Stock}) = S_{\rm open}(P^*)")
 
     st.markdown("**Mapeo stock ↔ h (lineal, anclado en thresholds JPM):**")
     st.latex(
