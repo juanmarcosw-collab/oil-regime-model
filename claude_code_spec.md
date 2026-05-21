@@ -21,7 +21,7 @@ Pegale a Claude Code el bloque de abajo. Adjuntá también el archivo `modelo_pe
 ```
 Quiero crear un proyecto Python que implemente y permita explorar interactivamente
 el modelo estructural del precio del petróleo descrito en el PDF adjunto
-`modelo_petroleo.pdf` (Banco Central de Chile, mayo 2026).
+`modelo_petroleo.pdf` (mayo 2026).
 
 El modelo articula dos regímenes (clásico y run) en el plano (h, P), con probabilidad
 de régimen derivada de un global game à la Goldstein-Pauzner. Las ecuaciones, parámetros
@@ -140,5 +140,5 @@ Para iteraciones posteriores, considerá:
 
 - **Extensión dinámica**: simular la trayectoria $h_t$ dada una condición inicial y un ritmo de drenado. Permitir contrafactuales (qué pasa si Ormuz sigue cerrado X meses más).
 - **Calibración estructural**: usar episodios históricos (1990, 2008, 2022) para calibrar $h^*$ vía maximum likelihood o método de momentos.
-- **Modelo multi-país**: extender al setup multi-origen del modelo BCCh.
+- **Modelo multi-país**: extender al setup multi-origen.
 - **Integración con datos en vivo**: conectar a la API de la EIA para inventarios y a alguna API de mercado para precios spot.

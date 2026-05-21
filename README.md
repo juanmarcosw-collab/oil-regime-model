@@ -1,6 +1,6 @@
 # Modelo Estructural del Precio del Petróleo bajo Stress de Oferta
 
-Explorador interactivo del modelo teórico-estructural desarrollado por la División de Política Monetaria del Banco Central de Chile (mayo 2026).
+Explorador interactivo de un modelo teórico-estructural del precio del petróleo bajo stress de oferta (mayo 2026).
 
 ## Descripción
 
@@ -65,12 +65,12 @@ oil_regime_model/
 ├── tests/
 │   └── test_model.py                  # Tests unitarios del modelo
 └── docs/
-    └── modelo_petroleo.pdf            # Referencia: documento de trabajo BCCh
+    └── modelo_petroleo.pdf            # Referencia: documento de trabajo
 ```
 
 ## Calibración
 
-Los valores por defecto corresponden a la calibración reportada en el documento de trabajo BCCh (mayo 2026, sección 8):
+Los valores por defecto corresponden a la calibración reportada en el documento de trabajo de referencia (mayo 2026, sección 8):
 
 | Parámetro | Valor | Descripción |
 |-----------|-------|-------------|
@@ -113,7 +113,7 @@ Los tests verifican propiedades matemáticas clave:
 
 **Documento de trabajo:**
 
-Banco Central de Chile, División de Política Monetaria (2026). "Modelo estructural del precio del petróleo bajo stress de oferta: Marco analítico para evaluar el riesgo de transición a régimen de pánico coordinado." *Documento de trabajo, versión 1.*
+"Modelo estructural del precio del petróleo bajo stress de oferta: Marco analítico para evaluar el riesgo de transición a régimen de pánico coordinado" (2026). *Documento de trabajo, versión 1.*
 
 **Fuentes teóricas clave:**
 
@@ -131,19 +131,13 @@ Banco Central de Chile, División de Política Monetaria (2026). "Modelo estruct
 
 - **Dinámica**: simular la trayectoria h_t dada una condición inicial y un ritmo de drenado. Permitir contrafactuales (¿qué si Ormuz sigue cerrado X meses más?).
 - **Calibración estructural**: usar episodios históricos para estimar h* vía maximum likelihood o método de momentos.
-- **Multi-país**: extender al setup multi-origen del modelo BCCh.
+- **Multi-país**: extender al setup multi-origen.
 - **Datos en vivo**: conectar a APIs de EIA (inventarios) y mercado de futuros (precios spot).
 
 ## Licencia
 
 Este trabajo está licenciado bajo CC-BY-4.0.
 
-## Contacto
-
-División de Política Monetaria  
-Banco Central de Chile  
-[politicamonetaria@bcentral.cl](mailto:politicamonetaria@bcentral.cl)
-
 ---
 
-**Nota**: Este es un documento de investigación. Las opiniones expresadas son de los autores y no necesariamente reflejan la posición oficial del Banco Central de Chile.
+**Nota**: Este es un documento de investigación. Las opiniones expresadas son de los autores.

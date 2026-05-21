@@ -2,7 +2,7 @@
 Núcleo del modelo estructural del precio del petróleo bajo stress de oferta.
 
 Implementa el modelo descrito en el PDF "Modelo estructural del precio del petróleo
-bajo stress de oferta" (BCCh, mayo 2026), secciones 4-7.
+bajo stress de oferta" (mayo 2026), secciones 4-7.
 
 Componentes:
   - Régimen clásico: P_C(h) solución de D(P) = S_f(P) + dot_R(h)

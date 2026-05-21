@@ -2,7 +2,7 @@
 Calibración del modelo estructural del precio del petróleo.
 
 Valores por defecto y sus fuentes, con referencias a secciones del PDF
-"Modelo estructural del precio del petróleo bajo stress de oferta" (BCCh, mayo 2026).
+"Modelo estructural del precio del petróleo bajo stress de oferta" (mayo 2026).
 """
 
 from dataclasses import dataclass
@@ -14,7 +14,7 @@ class ModelParams:
     Calibración del modelo estructural del petróleo.
 
     Todos los valores por defecto corresponden a la calibración reportada en
-    la sección 8 del documento de trabajo BCCh (mayo 2026).
+    la sección 8 del documento de trabajo de referencia (mayo 2026).
     """
 
     # === Parámetros estructurales (Sección 8.1) ===
@@ -49,7 +49,7 @@ class ModelParams:
     Elasticidad short-run de la demanda.
 
     Valora el cambio porcentual en cantidad demandada ante un cambio del 1% en precio.
-    Calibración BCCh (sección 8.1): 0.05, en el rango bajo [0.08-0.20] reportado
+    Calibración default (sección 8.1): 0.05, en el rango bajo [0.08-0.20] reportado
     por Caldara et al. (2019) para otros shocks. Justificación: consumo de petróleo
     es esencial en el corto plazo, poco sustitución posible.
     """
@@ -59,7 +59,7 @@ class ModelParams:
     Elasticidad short-run de la oferta.
 
     Cambio porcentual en cantidad ofrecida ante un cambio del 1% en precio.
-    Calibración BCCh (sección 8.1): 0.05. La oferta es poco elástica en el corto plazo
+    Calibración default (sección 8.1): 0.05. La oferta es poco elástica en el corto plazo
     porque la capacidad de producción está limitada por inversiones de largo plazo
     (shale, deepwater).
     """
@@ -143,5 +143,5 @@ class ModelParams:
 
 # Función helper para crear instancias
 def default_params() -> ModelParams:
-    """Retorna una instancia de ModelParams con calibración BCCh (mayo 2026)."""
+    """Retorna una instancia de ModelParams con calibración default (mayo 2026)."""
     return ModelParams()

@@ -56,7 +56,7 @@ def P_cap(params: ModelParams) -> float:
     Solución cerrada (Sección 5.2 del PDF):
         P_cap / P* = (D_0 / S_f0)^(1 / (ε_d + ε_s))
 
-    Con calibración BCCh (ε_d = ε_s = 0.05, D_0 = 104, S_f0 = 95, P* = 70):
+    Con calibración default (ε_d = ε_s = 0.05, D_0 = 104, S_f0 = 95, P* = 70):
         P_cap ≈ 70 · (104/95)^(1/0.10) ≈ 70 · 2.47 ≈ 173 USD/bbl
 
     Args:
@@ -77,7 +77,7 @@ def P_floor(params: ModelParams) -> float:
         D(P_floor) = S_f(P_floor) + R_max
 
     No tiene forma cerrada simple; se computa numéricamente con h grande (≈100).
-    Con calibración BCCh, P_floor ≈ 95 USD/bbl.
+    Con calibración default, P_floor ≈ 95 USD/bbl.
 
     Nota: el piso del modelo está notablemente por encima de P* (70) porque incluso
     con máximo release, la demanda de sustitución sigue siendo limitada.
