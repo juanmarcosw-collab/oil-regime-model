@@ -329,6 +329,24 @@ SERIES_DEFAULTS_TP = {
                    "label": r"$P^*$ — Ormuz abierto"},
 }
 
+STOCK_DEFAULTS = dict(
+    title="Evolución del stock observado",
+    xlabel="Fecha",
+    ylabel="Stock (millones de barriles)",
+    legend_loc="lower left",
+)
+
+SERIES_DEFAULTS_STOCK = {
+    "stock":  {"color": "#1F2937", "linestyle": "-",  "linewidth": 2.8,
+               "label": "Stock observado"},
+    "stress": {"color": "#DC2626", "linestyle": "--", "linewidth": 1.6,
+               "label": "Stress threshold (JPM)"},
+    "floor":  {"color": "#7F1D1D", "linestyle": "--", "linewidth": 1.6,
+               "label": "Operational floor (JPM)"},
+    "opt":    {"color": "#059669", "linestyle": ":",  "linewidth": 1.6,
+               "label": "Stock óptimo"},
+}
+
 COLORS_DEFAULTS = {
     "facecolor": "#FFFFFF",
     "band_color": "#F57C00",
@@ -491,6 +509,72 @@ def make_time_figure(
 
     if ax.get_legend_handles_labels()[0]:
         ax.legend(loc=legend_loc or TP_DEFAULTS["legend_loc"],
+                  fontsize=legend_fontsize, frameon=True, framealpha=0.6,
+                  edgecolor="none")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    fig.tight_layout()
+    return fig
+
+
+def make_stock_figure(
+    figsize=(10, 5), dpi=110,
+    show_stock=True, show_stress=True, show_floor=True, show_opt=True,
+    show_observed=True,
+    xlim=None, ylim=None,
+    title=None, xlabel=None, ylabel=None,
+    title_fontsize=13, axis_label_fontsize=12,
+    legend_fontsize=10, tick_fontsize=10,
+    legend_loc=None,
+    series_styles: dict | None = None,
+    colors: dict | None = None,
+):
+    series = _merged(SERIES_DEFAULTS_STOCK, series_styles)
+    palette = _merged(COLORS_DEFAULTS, colors)
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi,
+                           facecolor=palette["facecolor"])
+    ax.set_facecolor(palette["facecolor"])
+
+    if show_stock:
+        st_ = series["stock"]
+        ax.plot(dates_t, stock_t, color=st_["color"], linestyle=st_["linestyle"],
+                linewidth=st_["linewidth"], label=st_["label"])
+
+    for key, val, show in [("stress", stock_stress, show_stress),
+                            ("floor",  stock_floor,  show_floor),
+                            ("opt",    stock_opt,    show_opt)]:
+        if show:
+            st_ = series[key]
+            ax.axhline(val, color=st_["color"], linestyle=st_["linestyle"],
+                       linewidth=st_["linewidth"], label=st_["label"])
+
+    if show_observed:
+        ax.scatter([t_obs_date], [stock_actual], s=100,
+                   color=palette["observed_color"], zorder=10,
+                   edgecolor="white", linewidth=1.5,
+                   label=f"Observado {t_obs_date.strftime('%d-%b-%Y')}")
+
+    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b-%y"))
+    fig.autofmt_xdate(rotation=0, ha="center")
+
+    if xlim is not None:
+        ax.set_xlim(xlim)
+    if ylim is not None:
+        ax.set_ylim(ylim)
+
+    ax.set_xlabel(xlabel if xlabel is not None else STOCK_DEFAULTS["xlabel"],
+                  fontsize=axis_label_fontsize, fontweight="bold")
+    ax.set_ylabel(ylabel if ylabel is not None else STOCK_DEFAULTS["ylabel"],
+                  fontsize=axis_label_fontsize, fontweight="bold")
+    ax.set_title(title if title is not None else STOCK_DEFAULTS["title"],
+                 fontsize=title_fontsize, fontweight="bold")
+    ax.tick_params(axis="both", labelsize=tick_fontsize)
+
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(loc=legend_loc or STOCK_DEFAULTS["legend_loc"],
                   fontsize=legend_fontsize, frameon=True, framealpha=0.6,
                   edgecolor="none")
     ax.spines["top"].set_visible(False)
@@ -737,6 +821,175 @@ def customize_and_export(
         )
 
 
+def customize_and_export_stock(
+    fig_factory,
+    key_prefix: str,
+    filename_base: str,
+    default_ylim: tuple = (6500.0, 8500.0),
+):
+    """Panel de personalización + export para la figura de stock."""
+    with st.expander("Personalizar y exportar (para presentación)"):
+        tab_el, tab_st, tab_ax, tab_tx, tab_dl = st.tabs(
+            ["Elementos", "Estilo", "Ejes", "Textos", "Tamaño y descarga"]
+        )
+
+        with tab_el:
+            cA, cB = st.columns(2)
+            with cA:
+                show_stock = st.checkbox("Stock (línea principal)", True,
+                                         key=f"{key_prefix}_s")
+                show_observed = st.checkbox("Punto observado", True,
+                                            key=f"{key_prefix}_o")
+            with cB:
+                show_stress = st.checkbox("Stress threshold", True,
+                                          key=f"{key_prefix}_str")
+                show_floor = st.checkbox("Operational floor", True,
+                                         key=f"{key_prefix}_fl")
+                show_opt = st.checkbox("Stock óptimo", True,
+                                       key=f"{key_prefix}_op")
+
+        with tab_st:
+            st.caption("Colores generales:")
+            cg1, cg2 = st.columns(2)
+            facecolor = cg1.color_picker(
+                "Fondo", COLORS_DEFAULTS["facecolor"], key=f"{key_prefix}_fc",
+            )
+            observed_color = cg2.color_picker(
+                "Punto observado", COLORS_DEFAULTS["observed_color"],
+                key=f"{key_prefix}_oc",
+            )
+
+            st.caption("Por serie (color y estilo de línea):")
+            series_overrides = {}
+            series_labels = [
+                ("stock",  "Stock"),
+                ("stress", "Stress threshold"),
+                ("floor",  "Operational floor"),
+                ("opt",    "Stock óptimo"),
+            ]
+            for s_key, s_label in series_labels:
+                cs1, cs2, cs3 = st.columns([1.4, 1, 1])
+                cs1.markdown(f"<div style='padding-top:0.55em'>{s_label}</div>",
+                             unsafe_allow_html=True)
+                s_color = cs2.color_picker(
+                    f"Color {s_label}",
+                    SERIES_DEFAULTS_STOCK[s_key]["color"],
+                    key=f"{key_prefix}_{s_key}_col",
+                    label_visibility="collapsed",
+                )
+                s_ls_idx = LINESTYLE_OPTIONS.index(
+                    SERIES_DEFAULTS_STOCK[s_key]["linestyle"]
+                ) if SERIES_DEFAULTS_STOCK[s_key]["linestyle"] in LINESTYLE_OPTIONS else 0
+                s_ls = cs3.selectbox(
+                    f"Estilo {s_label}", LINESTYLE_OPTIONS, index=s_ls_idx,
+                    format_func=lambda x: LINESTYLE_LABELS[x],
+                    key=f"{key_prefix}_{s_key}_ls",
+                    label_visibility="collapsed",
+                )
+                series_overrides[s_key] = {"color": s_color, "linestyle": s_ls}
+
+            colors_overrides = {
+                "facecolor": facecolor,
+                "observed_color": observed_color,
+            }
+
+        with tab_ax:
+            st.caption("El eje X son fechas; los ticks se muestran automáticamente.")
+            use_ylim = st.checkbox(
+                "Fijar manualmente el rango Y", False, key=f"{key_prefix}_uy",
+            )
+            if use_ylim:
+                cy1, cy2 = st.columns(2)
+                ymin = cy1.number_input(
+                    "Y min", value=float(default_ylim[0]), step=50.0,
+                    key=f"{key_prefix}_ymin",
+                )
+                ymax = cy2.number_input(
+                    "Y max", value=float(default_ylim[1]), step=50.0,
+                    key=f"{key_prefix}_ymax",
+                )
+                ylim = (ymin, ymax)
+            else:
+                ylim = None
+
+        with tab_tx:
+            title = st.text_input(
+                "Título", STOCK_DEFAULTS["title"], key=f"{key_prefix}_t",
+            )
+            xlabel = st.text_input(
+                "Etiqueta eje X", STOCK_DEFAULTS["xlabel"], key=f"{key_prefix}_xl",
+            )
+            ylabel = st.text_input(
+                "Etiqueta eje Y", STOCK_DEFAULTS["ylabel"], key=f"{key_prefix}_yl",
+            )
+            loc_idx = (LEGEND_LOCS.index(STOCK_DEFAULTS["legend_loc"])
+                       if STOCK_DEFAULTS["legend_loc"] in LEGEND_LOCS else 0)
+            legend_loc = st.selectbox(
+                "Posición de la leyenda", LEGEND_LOCS, index=loc_idx,
+                key=f"{key_prefix}_ll",
+            )
+            st.caption("Tamaños de fuente:")
+            cf1, cf2 = st.columns(2)
+            title_fs = cf1.number_input(
+                "Título", 8, 30, 13, 1, key=f"{key_prefix}_tfs",
+            )
+            axis_fs = cf2.number_input(
+                "Etiquetas ejes", 6, 24, 12, 1, key=f"{key_prefix}_afs",
+            )
+            cf3, cf4 = st.columns(2)
+            legend_fs = cf3.number_input(
+                "Leyenda", 6, 20, 10, 1, key=f"{key_prefix}_lfs",
+            )
+            tick_fs = cf4.number_input(
+                "Ticks", 6, 18, 10, 1, key=f"{key_prefix}_tkfs",
+            )
+
+        with tab_dl:
+            cd1, cd2, cd3 = st.columns(3)
+            w = cd1.number_input(
+                "Ancho (in)", 4.0, 20.0, 10.0, 0.5, key=f"{key_prefix}_w",
+            )
+            h_in = cd2.number_input(
+                "Alto (in)", 3.0, 15.0, 5.0, 0.5, key=f"{key_prefix}_h",
+            )
+            dpi = cd3.number_input(
+                "DPI (solo PNG)", 72, 600, 200, 10, key=f"{key_prefix}_dpi",
+            )
+            fmt_label = st.selectbox(
+                "Formato", list(EXPORT_FORMATS.keys()), index=0,
+                key=f"{key_prefix}_fmt",
+            )
+
+        kwargs = dict(
+            figsize=(w, h_in), dpi=int(dpi),
+            show_stock=show_stock, show_stress=show_stress,
+            show_floor=show_floor, show_opt=show_opt,
+            show_observed=show_observed,
+            ylim=ylim,
+            title=title, xlabel=xlabel, ylabel=ylabel,
+            title_fontsize=int(title_fs), axis_label_fontsize=int(axis_fs),
+            legend_fontsize=int(legend_fs), tick_fontsize=int(tick_fs),
+            legend_loc=legend_loc,
+            series_styles=series_overrides,
+            colors=colors_overrides,
+        )
+
+        st.markdown("**Preview de la figura a exportar:**")
+        custom_fig = fig_factory(**kwargs)
+        st.pyplot(custom_fig, use_container_width=True)
+
+        fmt = EXPORT_FORMATS[fmt_label]
+        buf = io.BytesIO()
+        custom_fig.savefig(buf, format=fmt["ext"], bbox_inches="tight",
+                           facecolor=custom_fig.get_facecolor())
+        plt.close(custom_fig)
+        st.download_button(
+            f"Descargar {fmt['ext'].upper()}", data=buf.getvalue(),
+            file_name=f"{filename_base}.{fmt['ext']}", mime=fmt["mime"],
+            key=f"{key_prefix}_dl",
+        )
+
+
 # --- Layout: Figura 1 (h, P) + métricas ---
 
 col1, col2 = st.columns([2.5, 1])
@@ -826,6 +1079,47 @@ with colT2:
                  delta=f"({stock_t[-1] - stock_actual:+.0f} mb)")
     small_metric("Precio composite", f"${P_t[-1]:.1f}/bbl",
                  delta=f"({P_t[-1] - P_t[0]:+.1f})")
+
+
+# --- Layout: Figura 3 (evolución del stock) ---
+
+st.divider()
+st.markdown("## Evolución del stock")
+st.caption(
+    "Trayectoria del Total Global Observed Inventories bajo el supuesto de "
+    "Ormuz cerrado, con los thresholds operacionales (stress y floor) y el "
+    "stock óptimo de referencia."
+)
+
+colS1, colS2 = st.columns([2.5, 1])
+
+with colS1:
+    st.pyplot(make_stock_figure(), use_container_width=True)
+    customize_and_export_stock(
+        make_stock_figure, key_prefix="sk", filename_base="modelo_stock",
+    )
+
+with colS2:
+    st.markdown("##### Niveles de referencia")
+    small_metric("Stock óptimo", f"{stock_opt:.0f} mb")
+    small_metric("Stress threshold", f"{stock_stress:.0f} mb")
+    small_metric("Operational floor", f"{stock_floor:.0f} mb")
+
+    st.markdown("##### Estado actual")
+    small_metric(
+        "Stock observado", f"{stock_actual:.0f} mb",
+        delta=f"({stock_actual - stock_opt:+.0f} vs óptimo)",
+    )
+
+    st.markdown("##### Drawdown a 365 d")
+    small_metric(
+        "Stock final", f"{stock_t[-1]:.0f} mb",
+        delta=f"({stock_t[-1] - stock_actual:+.0f} mb)",
+    )
+    small_metric(
+        "Caída total", f"{stock_actual - stock_t[-1]:.0f} mb",
+        delta=f"({(stock_actual - stock_t[-1]) / 365:.2f} mb/d promedio)",
+    )
 
 
 # --- Secciones expandibles ---
