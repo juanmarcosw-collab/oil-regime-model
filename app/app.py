@@ -888,34 +888,37 @@ El modelo asume que **el shock es persistente** (Ormuz no se reabre). En la
 realidad, el mercado pricea una probabilidad $\theta$ de que el shock se
 resuelva. Por eso el precio observado suele ser menor al $P(h)$ del modelo:
 
-$$P_{\rm esp}(h) = (1-\theta)\,P(h) + \theta\,P^*(h)$$
+$$P_{\rm esp}(h) = (1-\theta)\,P(h) + \theta\,P^{\ast}(h)$$
 
 - **Slider $\theta$**: movelo hasta que la curva azul punteada calce con el
   punto observado. Ese $\theta$ es la probabilidad implícita de normalización
   que el mercado está priciendo.
 - **$\theta$ implícito** en la tabla derecha: idem, pero calculado de forma
   cerrada por despeje a partir de $P_{\rm observado}$.
+""")
 
-### Por qué $P^*$ depende de $h$ (demanda de reposición)
+    st.markdown(r"""### Por qué $P^{\ast}$ depende de $h$ (demanda de reposición)
 
 Cuando Ormuz se reabre con inventarios por debajo del nivel óptimo
 (default 8.200 mb), aparece una **demanda extra para reponer**. Modelamos
-esa tasa $R_{\rm repl}$ como lineal saturada:
+esa tasa $R_{\rm repl}$ como lineal saturada:""")
 
-$$R_{\rm repl}(\text{Stock}) = R_{\rm repl,max} \cdot
-  \text{clamp}\!\left(\tfrac{\text{Stock}_{\rm opt} - \text{Stock}}
-  {\text{Stock}_{\rm opt} - \text{Stock}_{\rm floor}},\ 0,\ 1\right)$$
+    st.latex(
+        r"R_{\rm repl}(\text{Stock}) = R_{\rm repl,max} \cdot "
+        r"\mathrm{clamp}\!\left(\frac{\text{Stock}_{\rm opt} - \text{Stock}}"
+        r"{\text{Stock}_{\rm opt} - \text{Stock}_{\rm floor}},\,0,\,1\right)"
+    )
 
-El equilibrio "Ormuz abierto" pasa a ser
-$D(P^*) + R_{\rm repl} = S_{\rm open}(P^*)$, lo que sube $P^*$ por encima
-del precio pre-shock $P^*_{\rm ref} = 70$. Como $R_{\rm repl}$ crece a
-medida que $h$ baja (porque Stock baja), la curva violeta $P^*(h)$ tiene
-**pendiente positiva hacia la izquierda**.
+    st.markdown(r"""El equilibrio "Ormuz abierto" pasa a ser
+$D(P^{\ast}) + R_{\rm repl} = S_{\rm open}(P^{\ast})$, lo que sube $P^{\ast}$
+por encima del precio pre-shock $P^{\ast}_{\rm ref} = 70$. Como $R_{\rm repl}$
+crece a medida que $h$ baja (porque Stock baja), la curva violeta
+$P^{\ast}(h)$ tiene **pendiente positiva hacia la izquierda**.
 
 Con la calibración default ($\varepsilon_d = \varepsilon_s = 0{,}05$), cada
-1 mb/d de reposición sube $P^*$ unos ~7 USD/bbl.
+1 mb/d de reposición sube $P^{\ast}$ unos ~7 USD/bbl.""")
 
-### Cómo leer la figura $(h, P)$
+    st.markdown(r"""### Cómo leer la figura $(h, P)$
 
 - **Curva verde** $P_C(h)$: precio clásico. Decreciente: más stock $\Rightarrow$
   más release $\Rightarrow$ precio menor.
@@ -924,10 +927,10 @@ Con la calibración default ($\varepsilon_d = \varepsilon_s = 0{,}05$), cada
 - **Curva negra** $P(h)$: composite ponderado por $q(h)$.
 - **Curva azul punteada** $P_{\rm esp}(h)$: composite descontado por la prob.
   $\theta$ de normalización.
-- **Curva violeta dash-dot** $P^*(h)$ (opcional): precio en el mundo
+- **Curva violeta dash-dot** $P^{\ast}(h)$ (opcional): precio en el mundo
   contrafactual donde Ormuz se reabre. **Tiene pendiente positiva hacia la
   izquierda** porque a menor stock, mayor la demanda de reposición y mayor
-  $P^*$. Se enciende desde el tab "Elementos" del panel de personalización.
+  $P^{\ast}$. Se enciende desde el tab "Elementos" del panel de personalización.
   La curva azul $P_{\rm esp}$ es exactamente el promedio ponderado entre
   la negra $P(h)$ y esta violeta.
 - **Banda naranja**: zona de fragilidad $[h^* - 2\sigma, h^* + 2\sigma]$.
@@ -945,7 +948,7 @@ Cómo interpretar cada curva en este contexto:
 - **Curva negra $P(t)$**: el composite "si Ormuz sigue cerrado en t". Es
   la **upper bound** condicional a no-apertura — lo que costaría el barril
   si el mercado supiera con certeza que el shock continúa.
-- **Curva violeta $P^*(t)$**: "si llego al día t con Ormuz cerrado y justo
+- **Curva violeta $P^{\ast}(t)$**: "si llego al día t con Ormuz cerrado y justo
   ese día se abre". Sube con $t$ porque mientras más se drenó el stock,
   mayor la demanda de reposición. Es la **lower bound** condicional a
   apertura.
@@ -994,7 +997,7 @@ with st.expander("Ecuaciones del modelo"):
     st.latex(r"P_{\rm esp}(h) = (1-\theta)\,P(h) + \theta\,P^*(h)")
 
     st.markdown("**Probabilidad implícita de normalización (despeje, "
-                "usando $P^*$ al stock actual):**")
+                "usando $P^{\\ast}$ al stock actual):**")
     st.latex(r"\theta = \frac{P(h) - P_{\text{mercado}}}{P(h) - P^*(h)}")
 
     st.markdown("**Demanda de reposición (solo activa con Ormuz abierto):**")
