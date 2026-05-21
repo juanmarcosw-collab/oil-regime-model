@@ -198,35 +198,155 @@ P_expected_t = (1 - theta_user) * P_t + theta_user * P_star
 dates_t = [t_obs_date + timedelta(days=int(d)) for d in t_days]
 
 
-# --- Helpers de figuras ---
+# --- Helpers: defaults de textos por figura ---
 
-def make_hP_figure(figsize=(10, 6), dpi=110):
-    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+HP_DEFAULTS = dict(
+    title="Modelo estructural en el plano (h, P)",
+    xlabel=r"$h$ — buffer slack agregado",
+    ylabel=r"$P$ — precio (USD/bbl)",
+    legend_loc="upper right",
+    xlim=(0.0, 1.5),
+)
 
-    ax.axvspan(h_star - 2*sigma, h_star + 2*sigma, alpha=0.10, color="#F57C00")
-    ax.axhline(P_star, color="#94A3B8", linestyle=":", linewidth=1, alpha=0.6)
-    ax.axhline(P_floor_val, color="#94A3B8", linestyle=":", linewidth=1, alpha=0.6)
-    ax.axhline(P_cap_val, color="#94A3B8", linestyle=":", linewidth=1, alpha=0.6)
+TP_DEFAULTS = dict(
+    title="Proyección temporal: precio dado dStock/dt = −dot_R(h(Stock))",
+    xlabel="Fecha",
+    ylabel=r"$P$ — precio (USD/bbl)",
+    legend_loc="lower right",
+)
 
-    ax.plot(h_grid, P_C_arr, color="#0F766E", linewidth=2.4,
-            label=r"$P_C(h)$ — clásico")
-    ax.plot(h_grid, P_R_arr, color="#C62828", linewidth=2.4, linestyle="--",
-            label=r"$P_R(h)$ — run")
-    ax.plot(h_grid, P_arr, color="#000000", linewidth=3.0,
-            label=r"$P(h)$ — composite")
-    ax.plot(h_grid, P_expected_arr, color="#1E40AF", linewidth=2.2, linestyle=":",
-            label=fr"$P_{{\rm esp}}(h)$ — esperado (θ={theta_user:.2f})")
+LEGEND_LOCS = [
+    "best", "upper right", "upper left", "lower right", "lower left",
+    "center right", "center left", "upper center", "lower center", "center",
+]
 
-    ax.axvline(h_star, color="#475569", linestyle=":", linewidth=1.2)
-    ax.scatter([h_actual], [P_observed], s=100, color="#1E40AF", zorder=10,
-               edgecolor="white", linewidth=1.5, label="Observado")
+LINESTYLE_LABELS = {
+    "-": "Solid",
+    "--": "Dashed",
+    ":": "Dotted",
+    "-.": "Dash-dot",
+}
+LINESTYLE_OPTIONS = list(LINESTYLE_LABELS.keys())
 
-    ax.set_xlim(0, 1.5)
-    ax.set_xlabel(r"$h$ — buffer slack agregado", fontsize=12, fontweight="bold")
-    ax.set_ylabel(r"$P$ — precio (USD/bbl)", fontsize=12, fontweight="bold")
-    ax.set_title("Modelo estructural en el plano (h, P)", fontsize=13, fontweight="bold")
-    ax.legend(loc="upper right", fontsize=10, frameon=True, framealpha=0.6,
-              edgecolor="none")
+SERIES_DEFAULTS_HP = {
+    "classical":  {"color": "#0F766E", "linestyle": "-",  "linewidth": 2.4,
+                   "label": r"$P_C(h)$ — clásico"},
+    "run":        {"color": "#C62828", "linestyle": "--", "linewidth": 2.4,
+                   "label": r"$P_R(h)$ — run"},
+    "composite":  {"color": "#000000", "linestyle": "-",  "linewidth": 3.0,
+                   "label": r"$P(h)$ — composite"},
+    "expected":   {"color": "#1E40AF", "linestyle": ":",  "linewidth": 2.2,
+                   "label_fmt": r"$P_{{\rm esp}}(h)$ — esperado (θ={theta:.2f})"},
+    "normalized": {"color": "#7C3AED", "linestyle": "-.", "linewidth": 2.0,
+                   "label": r"$P^*$ — Ormuz abierto"},
+}
+
+SERIES_DEFAULTS_TP = {
+    "classical":  {"color": "#0F766E", "linestyle": "-",  "linewidth": 2.4,
+                   "label": r"$P_C(t)$ — clásico"},
+    "run":        {"color": "#C62828", "linestyle": "--", "linewidth": 2.4,
+                   "label": r"$P_R(t)$ — run"},
+    "composite":  {"color": "#000000", "linestyle": "-",  "linewidth": 3.0,
+                   "label": r"$P(t)$ — composite"},
+    "expected":   {"color": "#1E40AF", "linestyle": ":",  "linewidth": 2.2,
+                   "label_fmt": r"$P_{{\rm esp}}(t)$ — esperado (θ={theta:.2f})"},
+    "normalized": {"color": "#7C3AED", "linestyle": "-.", "linewidth": 2.0,
+                   "label": r"$P^*$ — Ormuz abierto"},
+}
+
+COLORS_DEFAULTS = {
+    "facecolor": "#FFFFFF",
+    "band_color": "#F57C00",
+    "ref_line_color": "#94A3B8",
+    "observed_color": "#1E40AF",
+    "hstar_line_color": "#475569",
+}
+
+EXPORT_FORMATS = {
+    "PNG (raster)":  {"ext": "png", "mime": "image/png"},
+    "SVG (vectorial)": {"ext": "svg", "mime": "image/svg+xml"},
+    "PDF (vectorial)": {"ext": "pdf", "mime": "application/pdf"},
+}
+
+
+# --- Funciones de figuras ---
+
+def _merged(defaults: dict, overrides: dict | None) -> dict:
+    """Deep merge superficial: overrides individuales reemplazan keys."""
+    out = {k: dict(v) if isinstance(v, dict) else v for k, v in defaults.items()}
+    if overrides:
+        for k, v in overrides.items():
+            if isinstance(v, dict) and k in out and isinstance(out[k], dict):
+                out[k].update(v)
+            else:
+                out[k] = v
+    return out
+
+
+def make_hP_figure(
+    figsize=(10, 6), dpi=110,
+    show_classical=True, show_run=True, show_composite=True,
+    show_expected=True, show_normalized=False, show_observed=True,
+    show_band=True, show_reference_lines=True,
+    xlim=None, ylim=None,
+    title=None, xlabel=None, ylabel=None,
+    title_fontsize=13, axis_label_fontsize=12,
+    legend_fontsize=10, tick_fontsize=10,
+    legend_loc=None,
+    series_styles: dict | None = None,
+    colors: dict | None = None,
+):
+    series = _merged(SERIES_DEFAULTS_HP, series_styles)
+    palette = _merged(COLORS_DEFAULTS, colors)
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi,
+                           facecolor=palette["facecolor"])
+    ax.set_facecolor(palette["facecolor"])
+
+    if show_band:
+        ax.axvspan(h_star - 2*sigma, h_star + 2*sigma, alpha=0.10,
+                   color=palette["band_color"])
+        ax.axvline(h_star, color=palette["hstar_line_color"],
+                   linestyle=":", linewidth=1.2)
+
+    if show_reference_lines:
+        for y in (P_star, P_floor_val, P_cap_val):
+            ax.axhline(y, color=palette["ref_line_color"],
+                       linestyle=":", linewidth=1, alpha=0.6)
+
+    def _plot(key, x, y):
+        st_ = series[key]
+        label = st_.get("label") or st_["label_fmt"].format(theta=theta_user)
+        ax.plot(x, y, color=st_["color"], linestyle=st_["linestyle"],
+                linewidth=st_["linewidth"], label=label)
+
+    if show_classical:  _plot("classical", h_grid, P_C_arr)
+    if show_run:        _plot("run", h_grid, P_R_arr)
+    if show_composite:  _plot("composite", h_grid, P_arr)
+    if show_expected:   _plot("expected", h_grid, P_expected_arr)
+    if show_normalized: _plot("normalized", h_grid, np.full_like(h_grid, P_star))
+
+    if show_observed:
+        ax.scatter([h_actual], [P_observed], s=100,
+                   color=palette["observed_color"], zorder=10,
+                   edgecolor="white", linewidth=1.5, label="Observado")
+
+    ax.set_xlim(xlim if xlim is not None else HP_DEFAULTS["xlim"])
+    if ylim is not None:
+        ax.set_ylim(ylim)
+
+    ax.set_xlabel(xlabel if xlabel is not None else HP_DEFAULTS["xlabel"],
+                  fontsize=axis_label_fontsize, fontweight="bold")
+    ax.set_ylabel(ylabel if ylabel is not None else HP_DEFAULTS["ylabel"],
+                  fontsize=axis_label_fontsize, fontweight="bold")
+    ax.set_title(title if title is not None else HP_DEFAULTS["title"],
+                 fontsize=title_fontsize, fontweight="bold")
+    ax.tick_params(axis="both", labelsize=tick_fontsize)
+
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(loc=legend_loc or HP_DEFAULTS["legend_loc"],
+                  fontsize=legend_fontsize, frameon=True, framealpha=0.6,
+                  edgecolor="none")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
@@ -234,37 +354,70 @@ def make_hP_figure(figsize=(10, 6), dpi=110):
     return fig
 
 
-def make_time_figure(figsize=(10, 6), dpi=110):
-    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+def make_time_figure(
+    figsize=(10, 6), dpi=110,
+    show_classical=True, show_run=True, show_composite=True,
+    show_expected=True, show_normalized=False, show_observed=True,
+    show_reference_lines=True,
+    xlim=None, ylim=None,
+    title=None, xlabel=None, ylabel=None,
+    title_fontsize=13, axis_label_fontsize=12,
+    legend_fontsize=10, tick_fontsize=10,
+    legend_loc=None,
+    series_styles: dict | None = None,
+    colors: dict | None = None,
+):
+    series = _merged(SERIES_DEFAULTS_TP, series_styles)
+    palette = _merged(COLORS_DEFAULTS, colors)
 
-    ax.axhline(P_star, color="#94A3B8", linestyle=":", linewidth=1, alpha=0.6)
-    ax.axhline(P_floor_val, color="#94A3B8", linestyle=":", linewidth=1, alpha=0.6)
-    ax.axhline(P_cap_val, color="#94A3B8", linestyle=":", linewidth=1, alpha=0.6)
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi,
+                           facecolor=palette["facecolor"])
+    ax.set_facecolor(palette["facecolor"])
 
-    ax.plot(dates_t, P_C_t, color="#0F766E", linewidth=2.4,
-            label=r"$P_C(t)$ — clásico")
-    ax.plot(dates_t, P_R_t, color="#C62828", linewidth=2.4, linestyle="--",
-            label=r"$P_R(t)$ — run")
-    ax.plot(dates_t, P_t, color="#000000", linewidth=3.0,
-            label=r"$P(t)$ — composite")
-    ax.plot(dates_t, P_expected_t, color="#1E40AF", linewidth=2.2, linestyle=":",
-            label=fr"$P_{{\rm esp}}(t)$ — esperado (θ={theta_user:.2f})")
+    if show_reference_lines:
+        for y in (P_star, P_floor_val, P_cap_val):
+            ax.axhline(y, color=palette["ref_line_color"],
+                       linestyle=":", linewidth=1, alpha=0.6)
 
-    ax.scatter([t_obs_date], [P_observed], s=100, color="#1E40AF", zorder=10,
-               edgecolor="white", linewidth=1.5, label=f"Observado 30-abr-2026")
+    def _plot(key, x, y):
+        st_ = series[key]
+        label = st_.get("label") or st_["label_fmt"].format(theta=theta_user)
+        ax.plot(x, y, color=st_["color"], linestyle=st_["linestyle"],
+                linewidth=st_["linewidth"], label=label)
+
+    if show_classical:  _plot("classical", dates_t, P_C_t)
+    if show_run:        _plot("run", dates_t, P_R_t)
+    if show_composite:  _plot("composite", dates_t, P_t)
+    if show_expected:   _plot("expected", dates_t, P_expected_t)
+    if show_normalized: _plot("normalized", dates_t, np.full(len(dates_t), P_star))
+
+    if show_observed:
+        ax.scatter([t_obs_date], [P_observed], s=100,
+                   color=palette["observed_color"], zorder=10,
+                   edgecolor="white", linewidth=1.5,
+                   label=f"Observado {t_obs_date.strftime('%d-%b-%Y')}")
 
     ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b-%y"))
     fig.autofmt_xdate(rotation=0, ha="center")
 
-    ax.set_xlabel("Fecha", fontsize=12, fontweight="bold")
-    ax.set_ylabel(r"$P$ — precio (USD/bbl)", fontsize=12, fontweight="bold")
-    ax.set_title(
-        "Proyección temporal: precio dado dStock/dt = −dot_R(h(Stock))",
-        fontsize=13, fontweight="bold",
-    )
-    ax.legend(loc="lower right", fontsize=10, frameon=True, framealpha=0.6,
-              edgecolor="none")
+    if xlim is not None:
+        ax.set_xlim(xlim)
+    if ylim is not None:
+        ax.set_ylim(ylim)
+
+    ax.set_xlabel(xlabel if xlabel is not None else TP_DEFAULTS["xlabel"],
+                  fontsize=axis_label_fontsize, fontweight="bold")
+    ax.set_ylabel(ylabel if ylabel is not None else TP_DEFAULTS["ylabel"],
+                  fontsize=axis_label_fontsize, fontweight="bold")
+    ax.set_title(title if title is not None else TP_DEFAULTS["title"],
+                 fontsize=title_fontsize, fontweight="bold")
+    ax.tick_params(axis="both", labelsize=tick_fontsize)
+
+    if ax.get_legend_handles_labels()[0]:
+        ax.legend(loc=legend_loc or TP_DEFAULTS["legend_loc"],
+                  fontsize=legend_fontsize, frameon=True, framealpha=0.6,
+                  edgecolor="none")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
@@ -287,27 +440,223 @@ def small_metric(label: str, value: str, delta: str | None = None):
     )
 
 
-def export_controls(fig_factory, key_prefix: str, default_w=10.0, default_h=6.0,
-                    filename="figura.png"):
-    """Renderiza inputs de tamaño + botón de descarga PNG."""
-    with st.expander("Exportar figura (para presentación)"):
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            w = st.number_input("Ancho (in)", 4.0, 20.0, default_w, 0.5,
-                                key=f"{key_prefix}_w")
-        with c2:
-            h = st.number_input("Alto (in)", 3.0, 15.0, default_h, 0.5,
-                                key=f"{key_prefix}_h")
-        with c3:
-            dpi = st.number_input("DPI", 72, 600, 200, 10, key=f"{key_prefix}_dpi")
+def customize_and_export(
+    fig_factory,
+    defaults: dict,
+    series_defaults: dict,
+    key_prefix: str,
+    filename_base: str,
+    has_band: bool = False,
+    xlim_kind: str = "numeric",  # "numeric" (h, P) o "none" (fechas)
+    default_ylim: tuple = (0.0, 250.0),
+):
+    """Renderiza tabs de personalización + preview + descarga (PNG/SVG/PDF)."""
+    with st.expander("Personalizar y exportar (para presentación)"):
+        tab_el, tab_st, tab_ax, tab_tx, tab_dl = st.tabs(
+            ["Elementos", "Estilo", "Ejes", "Textos", "Tamaño y descarga"]
+        )
 
-        fig_export = fig_factory(figsize=(w, h), dpi=int(dpi))
+        with tab_el:
+            cA, cB = st.columns(2)
+            with cA:
+                show_classical = st.checkbox("P clásico", True, key=f"{key_prefix}_c")
+                show_run = st.checkbox("P run", True, key=f"{key_prefix}_r")
+                show_composite = st.checkbox("P composite", True, key=f"{key_prefix}_cm")
+                show_expected = st.checkbox("P esperado", True, key=f"{key_prefix}_e")
+                show_normalized = st.checkbox(
+                    "P* (Ormuz abierto)", False, key=f"{key_prefix}_n",
+                    help="Precio de equilibrio si el shock se resuelve. "
+                         "Constante en h (no depende del buffer slack).",
+                )
+            with cB:
+                show_observed = st.checkbox("Punto observado", True, key=f"{key_prefix}_o")
+                show_reference_lines = st.checkbox(
+                    "Líneas de referencia (P*, cap, piso)", True,
+                    key=f"{key_prefix}_ref",
+                )
+                if has_band:
+                    show_band = st.checkbox(
+                        "Banda de fragilidad y línea h*", True,
+                        key=f"{key_prefix}_b",
+                    )
+                else:
+                    show_band = False
+
+        with tab_st:
+            st.caption("Colores generales:")
+            cg1, cg2 = st.columns(2)
+            facecolor = cg1.color_picker(
+                "Fondo", COLORS_DEFAULTS["facecolor"], key=f"{key_prefix}_fc",
+            )
+            ref_color = cg2.color_picker(
+                "Líneas de referencia", COLORS_DEFAULTS["ref_line_color"],
+                key=f"{key_prefix}_refc",
+            )
+            cg3, cg4 = st.columns(2)
+            observed_color = cg3.color_picker(
+                "Punto observado", COLORS_DEFAULTS["observed_color"],
+                key=f"{key_prefix}_oc",
+            )
+            if has_band:
+                band_color = cg4.color_picker(
+                    "Banda de fragilidad", COLORS_DEFAULTS["band_color"],
+                    key=f"{key_prefix}_bc",
+                )
+            else:
+                band_color = COLORS_DEFAULTS["band_color"]
+
+            st.caption("Por serie (color y estilo de línea):")
+            series_overrides = {}
+            series_labels = [
+                ("classical", "P clásico"),
+                ("run", "P run"),
+                ("composite", "P composite"),
+                ("expected", "P esperado"),
+                ("normalized", "P* (Ormuz abierto)"),
+            ]
+            for s_key, s_label in series_labels:
+                cs1, cs2, cs3 = st.columns([1.4, 1, 1])
+                cs1.markdown(f"<div style='padding-top:0.55em'>{s_label}</div>",
+                             unsafe_allow_html=True)
+                s_color = cs2.color_picker(
+                    f"Color {s_label}", series_defaults[s_key]["color"],
+                    key=f"{key_prefix}_{s_key}_col",
+                    label_visibility="collapsed",
+                )
+                s_ls_idx = LINESTYLE_OPTIONS.index(
+                    series_defaults[s_key]["linestyle"]
+                ) if series_defaults[s_key]["linestyle"] in LINESTYLE_OPTIONS else 0
+                s_ls = cs3.selectbox(
+                    f"Estilo {s_label}", LINESTYLE_OPTIONS, index=s_ls_idx,
+                    format_func=lambda x: LINESTYLE_LABELS[x],
+                    key=f"{key_prefix}_{s_key}_ls",
+                    label_visibility="collapsed",
+                )
+                series_overrides[s_key] = {"color": s_color, "linestyle": s_ls}
+
+            colors_overrides = {
+                "facecolor": facecolor,
+                "ref_line_color": ref_color,
+                "observed_color": observed_color,
+                "band_color": band_color,
+            }
+
+        with tab_ax:
+            if xlim_kind == "numeric":
+                cx1, cx2 = st.columns(2)
+                xmin = cx1.number_input(
+                    "X min", value=float(defaults["xlim"][0]), step=0.1,
+                    key=f"{key_prefix}_xmin",
+                )
+                xmax = cx2.number_input(
+                    "X max", value=float(defaults["xlim"][1]), step=0.1,
+                    key=f"{key_prefix}_xmax",
+                )
+                xlim = (xmin, xmax)
+            else:
+                xlim = None
+                st.caption("Los ticks del eje X son fechas; se muestran automáticamente.")
+
+            use_ylim = st.checkbox(
+                "Fijar manualmente el rango Y", False, key=f"{key_prefix}_uy",
+            )
+            if use_ylim:
+                cy1, cy2 = st.columns(2)
+                ymin = cy1.number_input(
+                    "Y min", value=float(default_ylim[0]), step=5.0,
+                    key=f"{key_prefix}_ymin",
+                )
+                ymax = cy2.number_input(
+                    "Y max", value=float(default_ylim[1]), step=5.0,
+                    key=f"{key_prefix}_ymax",
+                )
+                ylim = (ymin, ymax)
+            else:
+                ylim = None
+
+        with tab_tx:
+            title = st.text_input(
+                "Título", defaults["title"], key=f"{key_prefix}_t",
+            )
+            xlabel = st.text_input(
+                "Etiqueta eje X", defaults["xlabel"], key=f"{key_prefix}_xl",
+            )
+            ylabel = st.text_input(
+                "Etiqueta eje Y", defaults["ylabel"], key=f"{key_prefix}_yl",
+            )
+            loc_idx = (LEGEND_LOCS.index(defaults["legend_loc"])
+                       if defaults["legend_loc"] in LEGEND_LOCS else 0)
+            legend_loc = st.selectbox(
+                "Posición de la leyenda", LEGEND_LOCS, index=loc_idx,
+                key=f"{key_prefix}_ll",
+            )
+            st.caption("Tamaños de fuente:")
+            cf1, cf2 = st.columns(2)
+            title_fs = cf1.number_input(
+                "Título", 8, 30, 13, 1, key=f"{key_prefix}_tfs",
+            )
+            axis_fs = cf2.number_input(
+                "Etiquetas ejes", 6, 24, 12, 1, key=f"{key_prefix}_afs",
+            )
+            cf3, cf4 = st.columns(2)
+            legend_fs = cf3.number_input(
+                "Leyenda", 6, 20, 10, 1, key=f"{key_prefix}_lfs",
+            )
+            tick_fs = cf4.number_input(
+                "Ticks", 6, 18, 10, 1, key=f"{key_prefix}_tkfs",
+            )
+
+        with tab_dl:
+            cd1, cd2, cd3 = st.columns(3)
+            w = cd1.number_input(
+                "Ancho (in)", 4.0, 20.0, 10.0, 0.5, key=f"{key_prefix}_w",
+            )
+            h_in = cd2.number_input(
+                "Alto (in)", 3.0, 15.0, 6.0, 0.5, key=f"{key_prefix}_h",
+            )
+            dpi = cd3.number_input(
+                "DPI (solo PNG)", 72, 600, 200, 10, key=f"{key_prefix}_dpi",
+            )
+            fmt_label = st.selectbox(
+                "Formato", list(EXPORT_FORMATS.keys()), index=0,
+                key=f"{key_prefix}_fmt",
+                help="PNG es raster (ideal para web). SVG/PDF son vectoriales "
+                     "(escalables sin pérdida; mejor para imprimir o "
+                     "presentaciones de alta calidad).",
+            )
+
+        # Build figure
+        kwargs = dict(
+            figsize=(w, h_in), dpi=int(dpi),
+            show_classical=show_classical, show_run=show_run,
+            show_composite=show_composite, show_expected=show_expected,
+            show_normalized=show_normalized,
+            show_observed=show_observed,
+            show_reference_lines=show_reference_lines,
+            xlim=xlim, ylim=ylim,
+            title=title, xlabel=xlabel, ylabel=ylabel,
+            title_fontsize=int(title_fs), axis_label_fontsize=int(axis_fs),
+            legend_fontsize=int(legend_fs), tick_fontsize=int(tick_fs),
+            legend_loc=legend_loc,
+            series_styles=series_overrides,
+            colors=colors_overrides,
+        )
+        if has_band:
+            kwargs["show_band"] = show_band
+
+        st.markdown("**Preview de la figura a exportar:**")
+        custom_fig = fig_factory(**kwargs)
+        st.pyplot(custom_fig, use_container_width=True)
+
+        fmt = EXPORT_FORMATS[fmt_label]
         buf = io.BytesIO()
-        fig_export.savefig(buf, format="png", bbox_inches="tight")
-        plt.close(fig_export)
+        save_kwargs = dict(format=fmt["ext"], bbox_inches="tight",
+                           facecolor=custom_fig.get_facecolor())
+        custom_fig.savefig(buf, **save_kwargs)
+        plt.close(custom_fig)
         st.download_button(
-            "Descargar PNG", data=buf.getvalue(),
-            file_name=filename, mime="image/png",
+            f"Descargar {fmt['ext'].upper()}", data=buf.getvalue(),
+            file_name=f"{filename_base}.{fmt['ext']}", mime=fmt["mime"],
             key=f"{key_prefix}_dl",
         )
 
@@ -318,7 +667,11 @@ col1, col2 = st.columns([2.5, 1])
 
 with col1:
     st.pyplot(make_hP_figure(), use_container_width=True)
-    export_controls(make_hP_figure, key_prefix="hp", filename="modelo_hP.png")
+    customize_and_export(
+        make_hP_figure, HP_DEFAULTS, SERIES_DEFAULTS_HP, key_prefix="hp",
+        filename_base="modelo_hP",
+        has_band=True, xlim_kind="numeric",
+    )
 
 with col2:
     st.markdown("##### Valores notables")
@@ -357,7 +710,11 @@ colT1, colT2 = st.columns([2.5, 1])
 
 with colT1:
     st.pyplot(make_time_figure(), use_container_width=True)
-    export_controls(make_time_figure, key_prefix="tp", filename="modelo_tP.png")
+    customize_and_export(
+        make_time_figure, TP_DEFAULTS, SERIES_DEFAULTS_TP, key_prefix="tp",
+        filename_base="modelo_tP",
+        has_band=False, xlim_kind="none",
+    )
 
 with colT2:
     st.markdown("##### Hitos temporales")
@@ -459,6 +816,12 @@ $$P_{\rm esp}(h) = (1-\theta)\,P(h) + \theta\,P^*$$
 - **Curva negra** $P(h)$: composite ponderado por $q(h)$.
 - **Curva azul punteada** $P_{\rm esp}(h)$: composite descontado por la prob.
   $\theta$ de normalización.
+- **Curva violeta dash-dot** $P^*$ (opcional): precio en el mundo
+  contrafactual donde Ormuz se reabre. **Constante en $h$** porque, una vez
+  restablecida la oferta, el buffer slack ya no determina el precio. Se
+  enciende desde el tab "Elementos" del panel de personalización. La curva
+  azul $P_{\rm esp}$ es exactamente el promedio ponderado entre la negra
+  $P(h)$ y esta violeta.
 - **Banda naranja**: zona de fragilidad $[h^* - 2\sigma, h^* + 2\sigma]$.
 - **Punto azul**: precio observado actual.
 
@@ -467,6 +830,20 @@ $$P_{\rm esp}(h) = (1-\theta)\,P(h) + \theta\,P^*$$
 Asume shock persistente. El stock se drena según $dStock/dt = -\dot R(h(Stock))$,
 y se grafica el precio de equilibrio a lo largo de 365 días. La columna derecha
 indica cuándo se cruzan los umbrales (stress y floor) bajo esa trayectoria.
+
+### Personalizar las figuras para una presentación
+
+Cada figura tiene un panel **"Personalizar y exportar"** debajo. Te permite:
+
+- **Elementos**: encender/apagar curvas individuales, el punto observado,
+  las líneas de referencia y la banda de fragilidad.
+- **Ejes**: ajustar manualmente los rangos X/Y (o dejar autoajuste).
+- **Textos**: editar título, etiquetas de ejes y posición/tamaño de la leyenda;
+  ajustar tamaño de fuente de cada elemento.
+- **Tamaño y descarga**: definir ancho/alto/DPI del PNG exportable y bajarlo
+  con un botón.
+
+Los cambios se reflejan en un preview en vivo antes de descargar.
 """)
 
 with st.expander("Ecuaciones del modelo"):
