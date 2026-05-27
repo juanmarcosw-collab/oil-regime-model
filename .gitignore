@@ -76,3 +76,6 @@ Thumbs.db
 
 # Working documents (no republicar sin confirmar)
 *.pdf
+
+# Datos crudos del banco — no committear nunca
+data/raw/
