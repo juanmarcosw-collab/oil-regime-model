@@ -97,10 +97,40 @@ sigma = st.sidebar.slider(
 )
 
 st.sidebar.subheader("Stock observado (IEA OMR)")
-stock_actual = st.sidebar.slider(
-    "Stock actual (millones de bbl)", 6500.0, 9000.0, 7951.0, 10.0,
-    help="Total Global Observed Inventories según IEA OMR. Default: 7.951 mb al 30-abr-2026."
-)
+
+# Cargar serie histórica de stocks del master pipeline (best-effort)
+_omr_dates: list = []
+_omr_lookup: dict = {}
+try:
+    from model.data_loader import load_master_stocks
+    _stocks_master = load_master_stocks()
+    _omr_dates = [d.strftime("%Y-%m") for d in _stocks_master["date"]]
+    _omr_lookup = dict(zip(_omr_dates, _stocks_master["stock_mb"].astype(float)))
+except Exception as _exc:
+    st.sidebar.warning(f"No pude cargar stocks IEA OMR: {_exc}")
+
+if _omr_dates:
+    _default_idx = len(_omr_dates) - 1  # último mes disponible
+    chosen_omr_month = st.sidebar.selectbox(
+        "Fecha OMR (mensual)", options=_omr_dates, index=_default_idx,
+        help=(
+            "Mes del OMR a usar. Stock se carga automáticamente desde "
+            "`omr_total_global_inventories.csv` (IEA OMR mayo 2026 extraído)."
+        ),
+    )
+    stock_from_omr = float(_omr_lookup[chosen_omr_month])
+    st.sidebar.caption(f"Stock IEA OMR @ {chosen_omr_month}: **{stock_from_omr:,.0f} mb**")
+    with st.sidebar.expander("Override manual del stock", expanded=False):
+        stock_actual = st.slider(
+            "Stock (mb)", 6500.0, 9000.0, stock_from_omr, 10.0,
+            help="Por default precarga el valor del OMR; usalo para análisis hipotéticos."
+        )
+else:
+    stock_actual = st.sidebar.slider(
+        "Stock actual (mb)", 6500.0, 9000.0, 7951.0, 10.0,
+        help="Total Global Observed Inventories. Fallback manual (master pipeline no disponible).",
+    )
+
 stock_stress = st.sidebar.slider(
     "Stress threshold (JPM, mb)", 6500.0, 9000.0, 7600.0, 10.0,
     help="Operational stress según JPMorgan. Por debajo, el run-risk se activa."
@@ -131,7 +161,7 @@ R_repl_max = st.sidebar.slider(
 
 st.sidebar.subheader("Observación de mercado")
 P_observed = st.sidebar.slider(
-    "P observado (USD/bbl)", 60.0, 200.0, 114.0, 1.0,
+    "P observado (USD/bbl)", 60.0, 200.0, 124.24, 0.5,
     help="Precio Brent observado al 30 de abril 2026."
 )
 theta_user = st.sidebar.slider(
@@ -141,6 +171,29 @@ theta_user = st.sidebar.slider(
         "se reabra). Movelo hasta que el precio esperado calce con el observado: "
         "ese θ es lo que el mercado está priciendo implícitamente."
     ),
+)
+
+
+# --- Inferencia empírica (overlay θ en serie temporal) ---
+
+st.sidebar.subheader("Inferencia empírica (θ histórico)")
+inference_source = st.sidebar.selectbox(
+    "Fuente de datos",
+    ["Ninguna", "Master pipeline", "Sintética"],
+    index=0,
+    help=(
+        "Master pipeline = CSVs sincronizados del proyecto padre (FRED daily + "
+        "OMR mensual + Bloomberg forward curves). Sintética = datos generados "
+        "para testing."
+    ),
+)
+show_theta_overlay = st.sidebar.checkbox(
+    "Mostrar θ implícito en Figura 2", value=False,
+    disabled=(inference_source == "Ninguna"),
+)
+show_term_structure = st.sidebar.checkbox(
+    "Mostrar term structure θ (forward curve)", value=False,
+    disabled=(inference_source == "Ninguna"),
 )
 
 
@@ -204,6 +257,47 @@ params = ModelParams(
 )
 
 h_actual = h_from_stock(stock_actual, stock_floor, stock_stress, h_star)
+
+
+# --- Carga de datos de inferencia (si fue seleccionada) ---
+
+theta_overlay_df = None
+forwards_df = None
+cm_master_df = None  # constant-maturity para term structure
+if inference_source != "Ninguna":
+    try:
+        from model.data_loader import (
+            load_master, load_synthetic, constant_maturity_to_term_structure,
+        )
+        from model.inference import theta_series, theta_term_structure_from_forward
+
+        if inference_source == "Master pipeline":
+            _data = load_master()
+            # Wrap constant_maturity para que el selector de fechas use sus snapshots
+            cm_master_df = _data["constant_maturity"]
+        elif inference_source == "Sintética":
+            _data = load_synthetic()
+
+        if show_theta_overlay and "brent_spot" in _data and "stocks" in _data:
+            theta_overlay_df = theta_series(
+                prices_df=_data["brent_spot"],
+                stocks_df=_data["stocks"],
+                stock_floor=stock_floor,
+                stock_stress=stock_stress,
+                params=params,
+                shock_start="2026-02-12",
+            )
+        if show_term_structure:
+            # Para master pipeline usamos constant_maturity (snapshots por día);
+            # para sintética usamos el archivo de forward curves preparado.
+            if inference_source == "Master pipeline" and cm_master_df is not None:
+                # Marker para que el render más abajo sepa que es master
+                forwards_df = "MASTER_CM"
+            elif inference_source == "Sintética" and "forwards" in _data:
+                forwards_df = _data["forwards"]
+    except Exception as exc:
+        st.sidebar.error(f"Error cargando datos: {exc}")
+
 
 h_grid = np.linspace(0.001, 1.5, 600)
 P_C_arr = np.array([P_classical(h, params) for h in h_grid])
@@ -459,6 +553,7 @@ def make_time_figure(
     legend_loc=None,
     series_styles: dict | None = None,
     colors: dict | None = None,
+    theta_overlay: "pd.DataFrame | None" = None,
 ):
     series = _merged(SERIES_DEFAULTS_TP, series_styles)
     palette = _merged(COLORS_DEFAULTS, colors)
@@ -512,10 +607,69 @@ def make_time_figure(
                   fontsize=legend_fontsize, frameon=True, framealpha=0.6,
                   edgecolor="none")
     ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
+    # Si hay overlay, mantenemos el spine derecho para el eje gemelo
+    if theta_overlay is None or len(theta_overlay) == 0:
+        ax.spines["right"].set_visible(False)
+
+    # --- Overlay θ implícito en eje derecho ---
+    if theta_overlay is not None and len(theta_overlay) > 0:
+        ax2 = ax.twinx()
+        ax2.plot(
+            theta_overlay["date"], theta_overlay["theta"],
+            color="#5e35b1", linewidth=1.6, linestyle="-",
+            alpha=0.85, label="θ implícito",
+        )
+        ax2.axhline(0, color="#5e35b1", linewidth=0.5, linestyle=":", alpha=0.4)
+        ax2.axhline(1, color="#5e35b1", linewidth=0.5, linestyle=":", alpha=0.4)
+        ax2.set_ylabel("θ implícito", fontsize=axis_label_fontsize,
+                       fontweight="bold", color="#5e35b1")
+        ax2.tick_params(axis="y", labelsize=tick_fontsize, colors="#5e35b1")
+        # Rango automático con padding
+        ymin, ymax = theta_overlay["theta"].min(), theta_overlay["theta"].max()
+        pad = max(0.1, (ymax - ymin) * 0.1)
+        ax2.set_ylim(min(-0.05, ymin - pad), max(1.05, ymax + pad))
+        ax2.spines["top"].set_visible(False)
 
     fig.tight_layout()
     return fig
+
+
+def make_term_structure_figure(
+    forwards_df, snapshot_date: str,
+    stock_at_snapshot: float, stock_floor_v: float, stock_stress_v: float,
+    params_obj, figsize=(10, 5), dpi=110,
+):
+    """Term structure de θ implícito desde forward curve a snapshot_date."""
+    from model.inference import theta_term_structure_from_forward
+
+    ts = theta_term_structure_from_forward(
+        forward_df=forwards_df,
+        snapshot_date=snapshot_date,
+        stock_at_snapshot=stock_at_snapshot,
+        stock_floor=stock_floor_v,
+        stock_stress=stock_stress_v,
+        params=params_obj,
+    )
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi, facecolor="white")
+    ax.plot(ts["maturity_month"], ts["theta"],
+            marker="o", color="#5e35b1", linewidth=1.8)
+    ax.axhline(0, color="gray", linewidth=0.5, linestyle=":")
+    ax.axhline(1, color="gray", linewidth=0.5, linestyle=":")
+    ax.fill_between(ts["maturity_month"], 0, ts["theta"],
+                    color="#5e35b1", alpha=0.1)
+    ax.set_xlabel("Maturity (meses)", fontsize=12, fontweight="bold")
+    ax.set_ylabel("θ implícito", fontsize=12, fontweight="bold")
+    ax.set_title(
+        f"Term structure de θ implícito — forward curve al {snapshot_date}",
+        fontsize=13, fontweight="bold",
+    )
+    ax.set_xticks(ts["maturity_month"])
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.grid(False)
+    fig.tight_layout()
+    return fig, ts
 
 
 def make_stock_figure(
@@ -1044,7 +1198,10 @@ st.caption(
 colT1, colT2 = st.columns([2.5, 1])
 
 with colT1:
-    st.pyplot(make_time_figure(), use_container_width=True)
+    st.pyplot(
+        make_time_figure(theta_overlay=theta_overlay_df),
+        use_container_width=True,
+    )
     customize_and_export(
         make_time_figure, TP_DEFAULTS, SERIES_DEFAULTS_TP, key_prefix="tp",
         filename_base="modelo_tP",
@@ -1079,6 +1236,65 @@ with colT2:
                  delta=f"({stock_t[-1] - stock_actual:+.0f} mb)")
     small_metric("Precio composite", f"${P_t[-1]:.1f}/bbl",
                  delta=f"({P_t[-1] - P_t[0]:+.1f})")
+
+
+# --- Layout: Figura — Term structure de θ desde forward curve ---
+
+if forwards_df is not None:
+    from model.data_loader import constant_maturity_to_term_structure
+
+    st.divider()
+    st.markdown("## Term structure de θ implícito (forward curve)")
+    st.caption(
+        "Para cada maturity del forward curve Brent, se proyecta el stock "
+        "(integrando la función de release) y se computa el θ que reconcilia "
+        "el precio forward con el composite del modelo a ese horizonte. Es "
+        "una lectura del mercado sobre la probabilidad de normalización a "
+        "distintos plazos."
+    )
+
+    # Modo master pipeline: usar constant_maturity (M1, M3, M6, M12, M24).
+    # Modo sintético: usar el archivo de forward curves preparado.
+    if isinstance(forwards_df, str) and forwards_df == "MASTER_CM":
+        cm_df = cm_master_df
+        snapshot_options = [
+            d.strftime("%Y-%m-%d") for d in cm_df["observation_date"]
+        ]
+        chosen_snapshot = st.selectbox(
+            "Fecha del snapshot de forward curve",
+            snapshot_options, index=len(snapshot_options) - 1,
+        )
+        forward_input = constant_maturity_to_term_structure(cm_df, chosen_snapshot)
+    else:
+        snapshot_options = sorted(forwards_df["snapshot_date"].unique())
+        chosen_snapshot = st.selectbox(
+            "Fecha del snapshot de forward curve",
+            snapshot_options, index=len(snapshot_options) - 1,
+        )
+        forward_input = forwards_df[
+            forwards_df["snapshot_date"] == chosen_snapshot
+        ]
+
+    ts_fig, ts_data = make_term_structure_figure(
+        forwards_df=forward_input,
+        snapshot_date=chosen_snapshot,
+        stock_at_snapshot=stock_actual,
+        stock_floor_v=stock_floor,
+        stock_stress_v=stock_stress,
+        params_obj=params,
+    )
+    colTS1, colTS2 = st.columns([2.5, 1])
+    with colTS1:
+        st.pyplot(ts_fig, use_container_width=True)
+    with colTS2:
+        st.markdown("##### Lectura por horizonte")
+        for m in (1, 3, 6, 12):
+            row = ts_data[ts_data["maturity_month"] == m]
+            if not row.empty:
+                small_metric(
+                    f"θ a {m} mes{'es' if m > 1 else ''}",
+                    f"{row['theta'].iloc[0]:.2f}",
+                )
 
 
 # --- Layout: Figura 3 (evolución del stock) ---
