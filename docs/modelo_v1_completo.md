@@ -617,11 +617,21 @@ la resolución, mayor el precio de reapertura.
 
 ### 12.2. Figura 2 — Trayectoria temporal P(t)
 
-- **Eje x:** fechas calendario desde la fecha de la observación inicial
-  (30-abril-2026 por default).
-- **Eje y:** precio.
-- **Líneas:** las mismas cuatro de Figura 1, pero proyectadas en el tiempo
-  bajo shock persistente (Ext 3).
+- **Eje x:** fechas calendario desde el inicio del shock (26-feb-2026 por
+  default).
+- **Eje y:** precio (USD/bbl).
+- **Líneas del modelo:** las mismas cuatro de Figura 1, pero proyectadas en
+  el tiempo bajo shock persistente (Ext 3).
+- **Series empíricas** (cuando hay fuente de inferencia activa):
+  - **Brent M1 rolling**: precio diario del front-month (Bloomberg
+    constant-maturity).
+  - **Brent forward** (línea punteada): extensión vía curva forward del
+    último snapshot, shifteada 1 mes hacia atrás para alinear con el
+    calendario M1.
+  - **θ implícito histórico** (eje derecho): serie diaria de $\theta$
+    despejado del precio M1 observado.
+  - **θ implícito forward** (eje derecho, punteado): extensión vía forward
+    curve.
 
 ### 12.3. Figura 3 — Evolución del stock
 
@@ -630,6 +640,84 @@ la resolución, mayor el precio de reapertura.
 - **Línea:** trayectoria simulada de drenaje.
 - **Horizontales:** Stock_stress (7.600), Stock_floor (6.800).
 - **Marcadores:** fechas de cruce de cada threshold.
+
+### 12.4. Figura 4 — Term structure de θ (snapshot único)
+
+Disponible bajo el toggle "Mostrar term structure θ" del sidebar. Para una
+fecha de snapshot (273 disponibles entre 21-abr-2025 y 27-may-2026):
+
+- **Eje x:** maturity en meses (1, 3, 6, 12, 24).
+- **Eje y:** $\theta$ implícito desde la forward curve a esa maturity.
+- **Lectura:** sigmoide ascendente — el mercado pricea baja probabilidad
+  de normalización a corto plazo y alta a largo plazo.
+
+Ejemplo (27-may-2026): θ(M1) ≈ 0,45 → θ(M24) ≈ 0,96.
+
+---
+
+## 12bis. Inferencia empírica de $\theta$ con datos reales
+
+El dashboard implementa una capa de inferencia que computa $\theta$
+implícito a partir de precios observados y stocks históricos. Es la
+operacionalización de la sección §10 contra datos reales del mercado.
+
+### 12bis.1. Serie histórica de $\theta_t$
+
+Para cada fecha $t$:
+
+1. Se interpola el stock IEA OMR a la fecha (mensual → diario lineal).
+2. Se mapea a $h_t$ con la Ext 2.
+3. Se computa el composite $P(h_t)$.
+4. Se despeja:
+
+$$\theta_t = \frac{P(h_t) - P_{\text{M1},t}}{P(h_t) - P^{\ast}(h_t)}$$
+
+donde $P_{\text{M1},t}$ es el front-month rolling de Bloomberg (variable
+empírica diaria).
+
+**Lectura del valor:** $\theta_t \in [0,1]$ es la probabilidad implícita
+genuina de normalización. $\theta_t < 0$ indica que el observado supera al
+composite (mercado más pesimista que el modelo). $\theta_t > 1$ indica que
+el observado está por debajo de $P^\ast$ (mercado priciando *deflación*
+relativa al pre-shock, raro).
+
+### 12bis.2. Term structure de $\theta$ desde forward curve
+
+Para un snapshot $t_0$ y cada delivery $T$ del forward:
+
+1. Se proyecta el stock al tiempo $T - 1m$ (calendario M1) usando la
+   función de release y el stock observado en $t_0$.
+2. Se computa el composite $P(h(T - 1m))$.
+3. Se despeja:
+
+$$\theta_F(T) = \frac{P\!\left(h(T - 1m)\right) - F(t_0, T)}
+{P\!\left(h(T - 1m)\right) - P^\ast\!\left(h(T - 1m)\right)}$$
+
+El **shift de 1 mes** es la clave para mapear el contrato $T$ al período
+en que es el M1 (el mes anterior al delivery).
+
+### 12bis.3. Empalme M1 ↔ forward
+
+La serie histórica M1 termina en el último snapshot disponible $t_0$. La
+curva forward del snapshot $t_0$ se interpola a frecuencia diaria y se
+shiftea 1 mes hacia atrás. El primer punto del forward coincide
+exactamente con el último M1 (mismo precio, mismo día), eliminando el gap
+visual.
+
+Esto da una serie continua "Brent precio del front-month" que combina
+observación histórica + expectativa de mercado, ploteada en el calendario
+correcto.
+
+### 12bis.4. Outputs operativos
+
+- **θ histórico** como tracker diario de expectativas del mercado.
+- **θ forward por maturity** como term structure de normalización.
+- **Brent M1 + forward shifteado** como serie continua del precio del
+  front-month, observado y esperado.
+
+Estos outputs son comparables con surveys (Bloomberg consensus), opciones
+implícitas (OVX), y mercados de predicción (Polymarket/Kalshi cuando
+existan sobre Ormuz reopening).
 
 ---
 

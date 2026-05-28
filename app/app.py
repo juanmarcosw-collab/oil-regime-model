@@ -15,6 +15,7 @@ from datetime import date, timedelta
 
 import streamlit as st
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from scipy.integrate import solve_ivp
@@ -110,7 +111,11 @@ except Exception as _exc:
     st.sidebar.warning(f"No pude cargar stocks IEA OMR: {_exc}")
 
 if _omr_dates:
-    _default_idx = len(_omr_dates) - 1  # último mes disponible
+    # Default: 2026-02 (inicio del shock); fallback al último mes disponible.
+    if "2026-02" in _omr_dates:
+        _default_idx = _omr_dates.index("2026-02")
+    else:
+        _default_idx = len(_omr_dates) - 1
     chosen_omr_month = st.sidebar.selectbox(
         "Fecha OMR (mensual)", options=_omr_dates, index=_default_idx,
         help=(
@@ -187,9 +192,10 @@ inference_source = st.sidebar.selectbox(
         "para testing."
     ),
 )
-show_theta_overlay = st.sidebar.checkbox(
-    "Mostrar θ implícito en Figura 2", value=False,
-    disabled=(inference_source == "Ninguna"),
+st.sidebar.caption(
+    "Cuando hay fuente seleccionada, Brent observado, futuros y θ implícito "
+    "aparecen como series del gráfico 2 (activables y editables desde "
+    "'Personalizar y exportar')."
 )
 show_term_structure = st.sidebar.checkbox(
     "Mostrar term structure θ (forward curve)", value=False,
@@ -264,12 +270,18 @@ h_actual = h_from_stock(stock_actual, stock_floor, stock_stress, h_star)
 theta_overlay_df = None
 forwards_df = None
 cm_master_df = None  # constant-maturity para term structure
+brent_observed_df = None  # serie Brent diaria para overlay en Figura 2
+brent_forward_ext_df = None  # extensión Brent vía forwards interpolados
+theta_forward_ext_df = None  # extensión θ vía forwards interpolados
 if inference_source != "Ninguna":
     try:
         from model.data_loader import (
             load_master, load_synthetic, constant_maturity_to_term_structure,
         )
-        from model.inference import theta_series, theta_term_structure_from_forward
+        from model.inference import (
+            theta_series, theta_term_structure_from_forward,
+            interpolate_forward_to_daily, theta_forward_extension,
+        )
 
         if inference_source == "Master pipeline":
             _data = load_master()
@@ -278,15 +290,67 @@ if inference_source != "Ninguna":
         elif inference_source == "Sintética":
             _data = load_synthetic()
 
-        if show_theta_overlay and "brent_spot" in _data and "stocks" in _data:
+        # Cargar todas las series empíricas disponibles cuando hay fuente.
+        # Estrategia: usar M1 rolling (Bloomberg constant_maturity) como serie
+        # histórica diaria — es el "futuro a ~30 días" más cercano a expirar.
+        # Luego empalmar con la forward curve interpolada del último snapshot,
+        # anchoreando en el último precio M1 para evitar gap visual.
+        if "constant_maturity" in _data and len(_data["constant_maturity"]) > 0:
+            cm = _data["constant_maturity"]
+            brent_observed_df = pd.DataFrame({
+                "date": cm["observation_date"],
+                "price": cm["M1"].astype(float),
+            }).dropna()
+            if "forwards_long" in _data and len(_data["forwards_long"]) > 0:
+                _latest_snap = cm["observation_date"].max()
+                _last_m1 = float(brent_observed_df["price"].iloc[-1])
+                try:
+                    brent_forward_ext_df = interpolate_forward_to_daily(
+                        _data["forwards_long"],
+                        _latest_snap.strftime("%Y-%m-%d"),
+                        anchor_price=_last_m1,
+                    )
+                except Exception:
+                    brent_forward_ext_df = None
+        # Fallback: si no hay constant_maturity, usar spot FRED.
+        elif "brent_spot" in _data:
+            brent_observed_df = _data["brent_spot"]
+            if "forwards_long" in _data and len(_data["forwards_long"]) > 0:
+                _latest_snap = _data["forwards_long"]["observation_date"].max()
+                try:
+                    brent_forward_ext_df = interpolate_forward_to_daily(
+                        _data["forwards_long"],
+                        _latest_snap.strftime("%Y-%m-%d"),
+                    )
+                except Exception:
+                    brent_forward_ext_df = None
+
+        if brent_observed_df is not None and "stocks" in _data:
             theta_overlay_df = theta_series(
-                prices_df=_data["brent_spot"],
+                prices_df=brent_observed_df,
                 stocks_df=_data["stocks"],
                 stock_floor=stock_floor,
                 stock_stress=stock_stress,
                 params=params,
                 shock_start="2026-02-12",
             )
+            if "forwards_long" in _data and len(_data["forwards_long"]) > 0:
+                _latest_snap = (
+                    _data["constant_maturity"]["observation_date"].max()
+                    if "constant_maturity" in _data
+                    else _data["forwards_long"]["observation_date"].max()
+                )
+                try:
+                    theta_forward_ext_df = theta_forward_extension(
+                        forwards_long_df=_data["forwards_long"],
+                        snapshot_date=_latest_snap.strftime("%Y-%m-%d"),
+                        stock_at_snapshot=stock_actual,
+                        stock_floor=stock_floor,
+                        stock_stress=stock_stress,
+                        params=params,
+                    )
+                except Exception:
+                    theta_forward_ext_df = None
         if show_term_structure:
             # Para master pipeline usamos constant_maturity (snapshots por día);
             # para sintética usamos el archivo de forward curves preparado.
@@ -333,7 +397,10 @@ theta = (P_model_actual - P_observed) / _denom if abs(_denom) > 1e-9 else 0.0
 
 # --- Cómputo: figura 2 (tiempo, P) ---
 
-t_obs_date = date(2026, 4, 30)
+# Default: inicio del shock (26-feb-2026). El dropdown OMR maneja el stock
+# inicial; mantenemos el shock anchorado a esa fecha para que el eje temporal
+# arranque desde el comienzo del shock independiente del mes OMR elegido.
+t_obs_date = date(2026, 2, 26)
 horizon_days = 365
 
 
@@ -421,6 +488,15 @@ SERIES_DEFAULTS_TP = {
                    "label_fmt": r"$P_{{\rm esp}}(t)$ — esperado (θ={theta:.2f})"},
     "normalized": {"color": "#7C3AED", "linestyle": "-.", "linewidth": 2.0,
                    "label": r"$P^*$ — Ormuz abierto"},
+    # Series empíricas (requieren datos de inferencia cargados)
+    "brent_obs":  {"color": "#C2410C", "linestyle": "-",  "linewidth": 2.0,
+                   "label": "Brent M1 (futuro ~1m rolling)"},
+    "brent_fwd":  {"color": "#C2410C", "linestyle": ":",  "linewidth": 1.6,
+                   "label": "Brent forward (curva últ. snapshot)"},
+    "theta_spot": {"color": "#5E35B1", "linestyle": "-",  "linewidth": 1.6,
+                   "label": "θ implícito (spot)"},
+    "theta_fwd":  {"color": "#5E35B1", "linestyle": ":",  "linewidth": 1.4,
+                   "label": "θ implícito (forward)"},
 }
 
 STOCK_DEFAULTS = dict(
@@ -447,6 +523,11 @@ COLORS_DEFAULTS = {
     "ref_line_color": "#94A3B8",
     "observed_color": "#1E40AF",
     "hstar_line_color": "#475569",
+    # Color distintivo para la serie Brent observada (Fig 2). No se confunde
+    # con P* (violeta), classical (verde), run (rojo) ni composite (negro).
+    "brent_series_color": "#C2410C",
+    # Color del overlay θ implícito en eje derecho.
+    "theta_color": "#5E35B1",
 }
 
 EXPORT_FORMATS = {
@@ -513,10 +594,10 @@ def make_hP_figure(
     if show_expected:   _plot("expected", h_grid, P_expected_arr)
     if show_normalized: _plot("normalized", h_grid, P_star_open_arr)
 
-    if show_observed:
-        ax.scatter([h_actual], [P_observed], s=100,
-                   color=palette["observed_color"], zorder=10,
-                   edgecolor="white", linewidth=1.5, label="Observado")
+    # Nota: el marker del precio observado en (h_actual, P_observed) fue
+    # removido porque resulta confuso cuando la fecha del precio observado y
+    # la fecha del stock no coinciden (la serie Brent observada cubre ese rol
+    # en Figura 2).
 
     ax.set_xlim(xlim if xlim is not None else HP_DEFAULTS["xlim"])
     if ylim is not None:
@@ -546,6 +627,8 @@ def make_time_figure(
     show_classical=True, show_run=True, show_composite=True,
     show_expected=True, show_normalized=True, show_observed=True,
     show_reference_lines=True,
+    show_brent_obs=True, show_brent_fwd=True,
+    show_theta_spot=True, show_theta_fwd=True,
     xlim=None, ylim=None,
     title=None, xlabel=None, ylabel=None,
     title_fontsize=13, axis_label_fontsize=12,
@@ -554,6 +637,9 @@ def make_time_figure(
     series_styles: dict | None = None,
     colors: dict | None = None,
     theta_overlay: "pd.DataFrame | None" = None,
+    brent_observed: "pd.DataFrame | None" = None,
+    brent_forward_extension: "pd.DataFrame | None" = None,
+    theta_forward_extension: "pd.DataFrame | None" = None,
 ):
     series = _merged(SERIES_DEFAULTS_TP, series_styles)
     palette = _merged(COLORS_DEFAULTS, colors)
@@ -579,11 +665,45 @@ def make_time_figure(
     if show_expected:   _plot("expected", dates_t, P_expected_t)
     if show_normalized: _plot("normalized", dates_t, P_star_open_t)
 
-    if show_observed:
-        ax.scatter([t_obs_date], [P_observed], s=100,
-                   color=palette["observed_color"], zorder=10,
-                   edgecolor="white", linewidth=1.5,
-                   label=f"Observado {t_obs_date.strftime('%d-%b-%Y')}")
+    # Nota: en Figura 2 ya no plantamos el punto P_observado en t_obs_date,
+    # porque P_observed = 124,24 (FRED al 30-abr) no corresponde al precio real
+    # del 26-feb. La serie completa de Brent observado (abajo) cumple ese rol.
+
+    # --- Series empíricas: Brent observado + extensión forward ---
+    end_date = dates_t[-1]
+    last_observed_date = None
+
+    if show_brent_obs and brent_observed is not None and len(brent_observed) > 0:
+        mask = (
+            (brent_observed["date"] >= pd.Timestamp(t_obs_date))
+            & (brent_observed["date"] <= pd.Timestamp(end_date))
+        )
+        bo = brent_observed[mask].sort_values("date")
+        if len(bo) > 0:
+            st_ = series["brent_obs"]
+            ax.plot(
+                bo["date"], bo["price"],
+                color=st_["color"], linewidth=st_["linewidth"],
+                linestyle=st_["linestyle"], alpha=0.95,
+                label=st_["label"], zorder=8,
+            )
+            last_observed_date = bo["date"].iloc[-1]
+
+    if show_brent_fwd and brent_forward_extension is not None and len(brent_forward_extension) > 0:
+        anchor = last_observed_date if last_observed_date is not None else pd.Timestamp(t_obs_date)
+        mask = (
+            (brent_forward_extension["date"] > anchor)
+            & (brent_forward_extension["date"] <= pd.Timestamp(end_date))
+        )
+        bfe = brent_forward_extension[mask].sort_values("date")
+        if len(bfe) > 0:
+            st_ = series["brent_fwd"]
+            ax.plot(
+                bfe["date"], bfe["price"],
+                color=st_["color"], linewidth=st_["linewidth"],
+                linestyle=st_["linestyle"], alpha=0.85,
+                label=st_["label"], zorder=7,
+            )
 
     ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b-%y"))
@@ -611,23 +731,60 @@ def make_time_figure(
     if theta_overlay is None or len(theta_overlay) == 0:
         ax.spines["right"].set_visible(False)
 
-    # --- Overlay θ implícito en eje derecho ---
-    if theta_overlay is not None and len(theta_overlay) > 0:
+    # --- θ implícito en eje derecho (spot + forward) ---
+    plot_theta_spot = (
+        show_theta_spot and theta_overlay is not None and len(theta_overlay) > 0
+    )
+    plot_theta_fwd = (
+        show_theta_fwd and theta_forward_extension is not None
+        and len(theta_forward_extension) > 0
+    )
+    if plot_theta_spot or plot_theta_fwd:
         ax2 = ax.twinx()
-        ax2.plot(
-            theta_overlay["date"], theta_overlay["theta"],
-            color="#5e35b1", linewidth=1.6, linestyle="-",
-            alpha=0.85, label="θ implícito",
-        )
-        ax2.axhline(0, color="#5e35b1", linewidth=0.5, linestyle=":", alpha=0.4)
-        ax2.axhline(1, color="#5e35b1", linewidth=0.5, linestyle=":", alpha=0.4)
+        theta_col = series["theta_spot"]["color"]  # color del eje
+        last_theta_date = None
+
+        if plot_theta_spot:
+            to = theta_overlay.sort_values("date")
+            st_ = series["theta_spot"]
+            ax2.plot(
+                to["date"], to["theta"],
+                color=st_["color"], linewidth=st_["linewidth"],
+                linestyle=st_["linestyle"], alpha=0.85, label=st_["label"],
+            )
+            last_theta_date = to["date"].iloc[-1]
+
+        if plot_theta_fwd:
+            anchor = last_theta_date if last_theta_date is not None else pd.Timestamp(t_obs_date)
+            mask = (
+                (theta_forward_extension["date"] > anchor)
+                & (theta_forward_extension["date"] <= pd.Timestamp(dates_t[-1]))
+            )
+            tfe = theta_forward_extension[mask].sort_values("date")
+            if len(tfe) > 0:
+                st_ = series["theta_fwd"]
+                ax2.plot(
+                    tfe["date"], tfe["theta"],
+                    color=st_["color"], linewidth=st_["linewidth"],
+                    linestyle=st_["linestyle"], alpha=0.85, label=st_["label"],
+                )
+
+        ax2.axhline(0, color=theta_col, linewidth=0.5, linestyle=":", alpha=0.4)
+        ax2.axhline(1, color=theta_col, linewidth=0.5, linestyle=":", alpha=0.4)
         ax2.set_ylabel("θ implícito", fontsize=axis_label_fontsize,
-                       fontweight="bold", color="#5e35b1")
-        ax2.tick_params(axis="y", labelsize=tick_fontsize, colors="#5e35b1")
-        # Rango automático con padding
-        ymin, ymax = theta_overlay["theta"].min(), theta_overlay["theta"].max()
-        pad = max(0.1, (ymax - ymin) * 0.1)
-        ax2.set_ylim(min(-0.05, ymin - pad), max(1.05, ymax + pad))
+                       fontweight="bold", color=theta_col)
+        ax2.tick_params(axis="y", labelsize=tick_fontsize, colors=theta_col)
+
+        # Rango automático
+        all_thetas = []
+        if plot_theta_spot:
+            all_thetas.extend(theta_overlay["theta"].dropna().tolist())
+        if plot_theta_fwd:
+            all_thetas.extend(theta_forward_extension["theta"].dropna().tolist())
+        if all_thetas:
+            ymin, ymax = min(all_thetas), max(all_thetas)
+            pad = max(0.1, (ymax - ymin) * 0.1)
+            ax2.set_ylim(min(-0.05, ymin - pad), max(1.05, ymax + pad))
         ax2.spines["top"].set_visible(False)
 
     fig.tight_layout()
@@ -762,6 +919,7 @@ def customize_and_export(
     has_band: bool = False,
     xlim_kind: str = "numeric",  # "numeric" (h, P) o "none" (fechas)
     default_ylim: tuple = (0.0, 250.0),
+    extra_kwargs: dict | None = None,
 ):
     """Renderiza tabs de personalización + preview + descarga (PNG/SVG/PDF)."""
     with st.expander("Personalizar y exportar (para presentación)"):
@@ -783,7 +941,9 @@ def customize_and_export(
                          "por la demanda de reposición.",
                 )
             with cB:
-                show_observed = st.checkbox("Punto observado", True, key=f"{key_prefix}_o")
+                # Punto observado removido de Figura 1 y 2 (la serie Brent
+                # diaria cumple ese rol mejor que un marker único).
+                show_observed = False
                 show_reference_lines = st.checkbox(
                     "Líneas de referencia (P*, cap, piso)", True,
                     key=f"{key_prefix}_ref",
@@ -795,6 +955,47 @@ def customize_and_export(
                     )
                 else:
                     show_band = False
+
+            # Series empíricas: solo aparecen en la Figura 2 (tp), y se
+            # deshabilitan si la inferencia no está activa (no hay datos).
+            extra = extra_kwargs or {}
+            show_brent_obs_cb = show_brent_fwd_cb = False
+            show_theta_spot_cb = show_theta_fwd_cb = False
+            if key_prefix == "tp":
+                st.markdown("**Series empíricas (inferencia):**")
+                cE1, cE2 = st.columns(2)
+                with cE1:
+                    show_brent_obs_cb = st.checkbox(
+                        "Brent M1 (rolling)",
+                        value=extra.get("brent_observed") is not None,
+                        disabled=extra.get("brent_observed") is None,
+                        key=f"{key_prefix}_bo",
+                    )
+                    show_theta_spot_cb = st.checkbox(
+                        "θ implícito (histórico)",
+                        value=extra.get("theta_overlay") is not None,
+                        disabled=extra.get("theta_overlay") is None,
+                        key=f"{key_prefix}_ths",
+                    )
+                with cE2:
+                    show_brent_fwd_cb = st.checkbox(
+                        "Brent forward (curva últ. snapshot)",
+                        value=extra.get("brent_forward_extension") is not None,
+                        disabled=extra.get("brent_forward_extension") is None,
+                        key=f"{key_prefix}_bf",
+                    )
+                    show_theta_fwd_cb = st.checkbox(
+                        "θ implícito (forward)",
+                        value=extra.get("theta_forward_extension") is not None,
+                        disabled=extra.get("theta_forward_extension") is None,
+                        key=f"{key_prefix}_thf",
+                    )
+                if not any([extra.get("brent_observed") is not None,
+                            extra.get("theta_overlay") is not None]):
+                    st.caption(
+                        "Las series empíricas requieren una fuente de "
+                        "inferencia seleccionada en el sidebar."
+                    )
 
         with tab_st:
             st.caption("Colores generales:")
@@ -828,7 +1029,20 @@ def customize_and_export(
                 ("expected", "P esperado"),
                 ("normalized", "P* (Ormuz abierto)"),
             ]
+            # Series empíricas solo en la Figura 2 (tp) — se aplican cuando
+            # los respectivos checkboxes del tab Elementos están activos.
+            if key_prefix == "tp":
+                series_labels += [
+                    ("__sep_empiric", None),  # separador visual
+                    ("brent_obs", "Brent observado"),
+                    ("brent_fwd", "Brent forward"),
+                    ("theta_spot", "θ implícito (spot)"),
+                    ("theta_fwd", "θ implícito (forward)"),
+                ]
             for s_key, s_label in series_labels:
+                if s_key == "__sep_empiric":
+                    st.caption("Series empíricas:")
+                    continue
                 cs1, cs2, cs3 = st.columns([1.4, 1, 1])
                 cs1.markdown(f"<div style='padding-top:0.55em'>{s_label}</div>",
                              unsafe_allow_html=True)
@@ -957,6 +1171,18 @@ def customize_and_export(
         )
         if has_band:
             kwargs["show_band"] = show_band
+
+        if key_prefix == "tp":
+            kwargs["show_brent_obs"] = show_brent_obs_cb
+            kwargs["show_brent_fwd"] = show_brent_fwd_cb
+            kwargs["show_theta_spot"] = show_theta_spot_cb
+            kwargs["show_theta_fwd"] = show_theta_fwd_cb
+
+        # Mezclar argumentos extra (datos: theta_overlay, brent_observed, etc.)
+        # sin pisar los del panel.
+        if extra_kwargs:
+            for k, v in extra_kwargs.items():
+                kwargs.setdefault(k, v)
 
         st.markdown("**Preview de la figura a exportar:**")
         custom_fig = fig_factory(**kwargs)
@@ -1199,13 +1425,24 @@ colT1, colT2 = st.columns([2.5, 1])
 
 with colT1:
     st.pyplot(
-        make_time_figure(theta_overlay=theta_overlay_df),
+        make_time_figure(
+            theta_overlay=theta_overlay_df,
+            brent_observed=brent_observed_df,
+            brent_forward_extension=brent_forward_ext_df,
+            theta_forward_extension=theta_forward_ext_df,
+        ),
         use_container_width=True,
     )
     customize_and_export(
         make_time_figure, TP_DEFAULTS, SERIES_DEFAULTS_TP, key_prefix="tp",
         filename_base="modelo_tP",
         has_band=False, xlim_kind="none",
+        extra_kwargs=dict(
+            theta_overlay=theta_overlay_df,
+            brent_observed=brent_observed_df,
+            brent_forward_extension=brent_forward_ext_df,
+            theta_forward_extension=theta_forward_ext_df,
+        ),
     )
 
 with colT2:
@@ -1453,7 +1690,7 @@ horizonte**: el stock se drena según $dStock/dt = -\dot R(h(Stock))$ por
 365 días. Para cada fecha $t$, las curvas se evalúan al stock vigente en
 ese instante.
 
-Cómo interpretar cada curva en este contexto:
+Cómo interpretar cada curva del modelo en este contexto:
 
 - **Curva negra $P(t)$**: el composite "si Ormuz sigue cerrado en t". Es
   la **upper bound** condicional a no-apertura — lo que costaría el barril
@@ -1474,6 +1711,40 @@ Cómo interpretar cada curva en este contexto:
 
 La columna derecha indica cuándo se cruzan los umbrales (stress y floor)
 bajo la trayectoria de drenaje.
+
+### Series empíricas en la figura $(t, P)$
+
+Al seleccionar una fuente de inferencia (e.g. Master pipeline), aparecen
+**series empíricas superpuestas** que se pueden activar/editar desde el
+panel "Personalizar y exportar":
+
+- **Brent M1 (rolling)** — línea naranja sólida: precio diario del
+  *front-month* (contrato más cercano a expirar) extraído del
+  constant-maturity de Bloomberg. Cubre desde inicios del shock hasta el
+  último snapshot disponible (~hoy).
+
+- **Brent forward (curva últ. snapshot)** — línea naranja punteada:
+  extensión hacia adelante usando la curva forward del último día.
+  **Importante**: las fechas se shiftean 1 mes hacia atrás para alinearlas
+  con el calendario del M1 rolling. Es decir, el precio del contrato
+  jul-26 (cotizado al snapshot) se grafica en 1-jun-26, porque ese
+  contrato será el M1 durante junio. Esto evita un gap visual y refleja
+  la lectura natural: "qué será el M1 en cada fecha futura, según el
+  mercado de futuros de hoy".
+
+- **θ implícito (histórico)** — línea violeta sólida (eje derecho):
+  serie diaria de $\theta$ despejado del precio observado M1 y el
+  composite del modelo a la fecha. Si $\theta < 0$, el observado supera
+  al composite (mercado pricea más severidad que el modelo).
+
+- **θ implícito (forward)** — línea violeta punteada (eje derecho):
+  extensión hacia adelante. Para cada contrato del forward, se proyecta
+  el stock al delivery shifteado y se despeja $\theta$ desde el precio
+  forward. Se grafica con el mismo shift de 1 mes que la curva Brent
+  forward.
+
+Empalme: la última observación M1 coincide exactamente con el primer
+punto del Brent forward (mismo precio, mismo día); idem para θ.
 
 ### Personalizar las figuras para una presentación
 
@@ -1530,6 +1801,30 @@ with st.expander("Ecuaciones del modelo"):
     st.markdown("**Dinámica del stock (asumiendo shock persistente):**")
     st.latex(r"\frac{d\,\text{Stock}}{dt} = -\dot R\!\left(h(\text{Stock})\right)")
 
+    st.markdown("---")
+    st.markdown("**Inferencia empírica — θ implícito histórico (por fecha t):**")
+    st.latex(
+        r"\theta_t = \frac{P(h_t) - P_{\text{M1},t}}{P(h_t) - P^{\ast}(h_t)}"
+    )
+    st.caption(
+        "Donde $P_{\\text{M1},t}$ es el precio diario del front-month "
+        "(Bloomberg constant-maturity) y $h_t$ se computa con el stock "
+        "interpolado mensualmente del IEA OMR."
+    )
+
+    st.markdown(
+        "**θ implícito desde la curva forward — shift 1 mes (calendario M1):**"
+    )
+    st.latex(
+        r"\theta_{F}(T) = \frac{P\!\left(h(T - 1m)\right) - F(t_0, T)}"
+        r"{P\!\left(h(T - 1m)\right) - P^{\ast}\!\left(h(T - 1m)\right)}"
+    )
+    st.caption(
+        "Para cada delivery $T$ del snapshot $t_0$, se proyecta el stock "
+        "al tiempo $T - 1m$ (no $T$) para mapear el contrato al período en "
+        "que será el M1. $F(t_0, T)$ es el precio forward observado en $t_0$."
+    )
+
 with st.expander("Funciones constituyentes"):
     st.markdown("**Demanda y oferta de flujo (elasticidad constante):**")
     st.latex(r"D(P) = D_0 \left(\frac{P}{P^*}\right)^{-\epsilon_d}")
@@ -1540,6 +1835,27 @@ with st.expander("Funciones constituyentes"):
 
     st.markdown("**Demanda especulativa en el run:**")
     st.latex(r"\delta(h) = \delta_0 \cdot \frac{\dot R(h)}{R_{\max}}")
+
+    st.markdown("---")
+    st.markdown(
+        "**Brent M1 rolling (input empírico de la inferencia):** serie "
+        "diaria del front-month proveniente de `brent_constant_maturity.csv` "
+        "(Bloomberg ICE Brent). Por construcción, cada día representa el "
+        "precio del contrato a ~30 días de delivery."
+    )
+    st.markdown(
+        "**Empalme M1 ↔ curva forward (shift 1 mes):**"
+    )
+    st.latex(
+        r"P_{\rm fwd}(t) = F(t_0,\, t + 1m) \quad \text{para } t \geq t_0"
+    )
+    st.caption(
+        "Para extender la serie M1 más allá del último día observado $t_0$, "
+        "se usa la forward curve del snapshot $t_0$ y cada delivery $T$ se "
+        "mapea a la fecha $T - 1m$ (porque ese contrato será el M1 durante "
+        "el mes previo a su delivery). El primer punto del forward coincide "
+        "exactamente con el último M1, evitando gap visual."
+    )
 
 with st.expander("Referencias bibliográficas"):
     st.markdown("""

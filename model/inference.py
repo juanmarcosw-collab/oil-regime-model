@@ -160,6 +160,128 @@ def theta_series(
 # Term structure desde forward curve
 # ---------------------------------------------------------------------------
 
+def interpolate_forward_to_daily(
+    forwards_long_df: pd.DataFrame,
+    snapshot_date: str,
+    anchor_price: float | None = None,
+    shift_months: int = 1,
+) -> pd.DataFrame:
+    """Interpola una forward curve discreta a frecuencia diaria, mapeada al
+    calendario del M1 rolling (cada delivery_date se adelanta `shift_months`
+    meses para representar "el precio del contrato que será M1 en esa fecha").
+
+    Justificación del shift: la serie histórica M1 (rolling front-month)
+    representa, en cada día, el precio del contrato más cercano a expirar
+    (~1 mes adelantado). Su extensión natural hacia el futuro NO es el precio
+    del contrato del mismo mes (que sería el M0 que no existe), sino el
+    precio del contrato cuya entrega ocurre ~1 mes después. Adelantar las
+    fechas de la forward curve por shift_months alinea ambas series.
+
+    Si `anchor_price` se provee, se inserta un punto en `snapshot_date` con
+    ese precio para empalmar sin gap con la serie histórica.
+
+    Retorna DataFrame con columnas ['date', 'price'] diario.
+    """
+    snap_ts = pd.Timestamp(snapshot_date)
+    df = forwards_long_df[forwards_long_df["observation_date"] == snap_ts]
+    if df.empty:
+        df = forwards_long_df[forwards_long_df["observation_date"] <= snap_ts]
+        if df.empty:
+            raise ValueError(f"No forward data en o antes de {snapshot_date}")
+        latest = df["observation_date"].max()
+        df = df[df["observation_date"] == latest]
+        snap_ts = latest
+
+    df = df.sort_values("delivery_month")
+
+    # Shift de fechas: delivery_T -> (delivery_T − shift_months meses).
+    shifted = (
+        pd.to_datetime(df["delivery_month"].values)
+        - pd.DateOffset(months=shift_months)
+    )
+
+    index = list(shifted)
+    values = df["price"].astype(float).tolist()
+    if anchor_price is not None and snap_ts < min(index):
+        # Anchor en snap_ts para conectar con la serie histórica.
+        index = [snap_ts] + index
+        values = [float(anchor_price)] + values
+
+    start = min(index)
+    end = max(index)
+    daily_dates = pd.date_range(start, end, freq="D")
+
+    series = pd.Series(index=pd.DatetimeIndex(index), data=values)
+    combined = series.reindex(series.index.union(daily_dates)).sort_index()
+    interp = combined.interpolate(method="time")
+    daily = interp.reindex(daily_dates)
+    return pd.DataFrame({"date": daily_dates, "price": daily.values})
+
+
+def theta_forward_extension(
+    forwards_long_df: pd.DataFrame,
+    snapshot_date: str,
+    stock_at_snapshot: float,
+    stock_floor: float,
+    stock_stress: float,
+    params,
+    shift_months: int = 1,
+) -> pd.DataFrame:
+    """Serie diaria de θ implícito extendido por maturity del forward curve,
+    mapeada al calendario del M1 rolling (delivery shifteado `shift_months`).
+
+    Para cada delivery_month del snapshot:
+      1. Computa el período entre snapshot y (delivery − shift_months meses).
+      2. Proyecta el stock a ese momento (release × días) acotado al floor.
+      3. Computa composite P_modelo a ese stock.
+      4. Despeja θ tal que F(snapshot, delivery) = (1-θ) P_modelo + θ P*.
+      5. Plotea el θ en la fecha shifteada (consistente con M1 rolling).
+
+    Luego interpola la serie de θ a frecuencia diaria.
+    """
+    snap_ts = pd.Timestamp(snapshot_date)
+    df = forwards_long_df[forwards_long_df["observation_date"] == snap_ts]
+    if df.empty:
+        df = forwards_long_df[forwards_long_df["observation_date"] <= snap_ts]
+        if df.empty:
+            raise ValueError(f"No forward data en o antes de {snapshot_date}")
+        latest = df["observation_date"].max()
+        df = df[df["observation_date"] == latest]
+        snap_ts = latest
+
+    df = df.sort_values("delivery_month").reset_index(drop=True)
+
+    from .core import release_rate, P_classical, P_run, q_run
+
+    avg_R = release_rate(
+        h_from_stock(stock_at_snapshot, stock_floor, stock_stress, params.h_star),
+        params,
+    )
+
+    points = []
+    for _, r in df.iterrows():
+        delivery = pd.Timestamp(r["delivery_month"])
+        plot_date = delivery - pd.DateOffset(months=shift_months)
+        days = max((plot_date - snap_ts).days, 0)
+        stock_T = max(stock_at_snapshot - avg_R * days, stock_floor + 1.0)
+        h_T = h_from_stock(stock_T, stock_floor, stock_stress, params.h_star)
+        p_c = P_classical(h_T, params)
+        p_r = P_run(h_T, params)
+        q = q_run(h_T, params)
+        composite = (1 - q) * p_c + q * p_r
+
+        denom = composite - params.P_star
+        theta_val = (composite - float(r["price"])) / denom if abs(denom) > 1e-9 else float("nan")
+        points.append((plot_date, theta_val))
+
+    dates_arr = pd.DatetimeIndex([p[0] for p in points])
+    series = pd.Series(index=dates_arr, data=[p[1] for p in points])
+    daily_dates = pd.date_range(dates_arr.min(), dates_arr.max(), freq="D")
+    combined = series.reindex(series.index.union(daily_dates)).sort_index()
+    interp = combined.interpolate(method="time").reindex(daily_dates)
+    return pd.DataFrame({"date": daily_dates, "theta": interp.values})
+
+
 def theta_term_structure_from_forward(
     forward_df: pd.DataFrame,
     snapshot_date: str,
