@@ -252,7 +252,7 @@ la sensibilidad a $\mu$ es alta, vale la pena destacarlo si se pregunta.
 - **Roja punteada:** $P_R(h)$ — precio régimen run (Ormuz cerrado + corrida).
 - **Negra:** $P(h)$ — composite ponderado por $q(h)$.
 - **Morada:** $P^\ast(h)$ — precio si Ormuz reabre (con demanda de reposición).
-- **Marcador:** precio Brent al 30-abril-2026 (124,24 USD/bbl, FRED; 122,58 Bloomberg M1), plantado en $h_{\rm actual}$ derivado del stock IEA OMR del mismo día. Ambos del último OMR disponible al momento de la presentación (22-may-2026).
+- **Marcador:** Brent M1 al 30-abril-2026 (114,01 USD/bbl, Bloomberg constant-maturity), plantado en $h_{\rm actual}$ derivado del stock IEA OMR del mismo día. Ambos del último reporte disponible al momento de la presentación (22-may-2026).
 
 **8.2. Figura 2 — Precio en el tiempo P(t): ¿qué muestra?**
 La trayectoria proyectada del precio bajo shock persistente. Cada curva es
@@ -267,13 +267,11 @@ floor = 6.800 mb). Las fechas de cruce señalan hitos de transición de régimen
 **8.4. ¿Por qué el precio observado está cerca / por debajo del modelo composite?**
 Cuando el precio observado está significativamente por debajo del composite,
 el mercado pricea una probabilidad positiva θ de normalización: $\theta_{\rm imp}
-= (P_{\rm modelo} - P_{\rm observado}) / (P_{\rm modelo} - P^\ast)$. **Con la
-calibración actual** (composite ≈ 115, observado = 124,24 FRED), el wedge
-es **negativo**: $\theta \approx -0{,}21$. Lectura: el mercado pricea **más
-severidad que la que el modelo capta**. Esto sugiere subestimación de la
-fragilidad o canales no modelados (risk premium, run regime parcialmente
-activo). Es un hallazgo diagnóstico — no invalida el modelo, señala
-calibraciones a refinar.
+= (P_{\rm modelo} - P_{\rm M1}) / (P_{\rm modelo} - P^\ast)$. **Con la
+calibración actual** (composite ≈ 115, M1 Bloomberg = 114,01), el wedge es
+chico (≈ +0,8 USD/bbl) y $\theta \approx +0{,}02$. Lectura: el modelo
+ajusta muy bien al precio observado al 30-abril — el mercado pricea
+persistencia casi total del shock, sin descontar resolución a corto plazo.
 
 ---
 
@@ -425,15 +423,14 @@ forecasts, Polymarket).
 ## 13. Interpretación e implicaciones
 
 **13.1. ¿Qué nos dice el modelo sobre la situación actual (mayo 2026)?**
-Datos del último IEA OMR (30-abril-2026): stock = 7.951 mb, Brent = 124,24
-USD/bbl (FRED). Con la calibración, $h \approx 0{,}43$ — **por encima del
-umbral de stress** ($h^\ast = 0{,}30$). El sistema opera principalmente en
-régimen clásico bajo shock. Composite del modelo ≈ 115; observado = 124,24.
-**El wedge es negativo** ($\theta_{\rm implícito} \approx -0{,}21$): el
-mercado pricea más severidad que la que el modelo capta. Cuatro hipótesis
-candidatas (no excluyentes): (a) modelo subestima fragilidad, (b) risk
-premium no modelado, (c) elasticidades aún más bajas, (d) run regime
-parcialmente activo. Es un hallazgo diagnóstico que orienta el refinamiento.
+Datos del último IEA OMR + Bloomberg constant-maturity (30-abril-2026):
+stock = 7.951 mb, Brent M1 = 114,01 USD/bbl. Con la calibración, $h
+\approx 0{,}43$ — **por encima del umbral de stress** ($h^\ast = 0{,}30$).
+El sistema opera principalmente en régimen clásico bajo shock. Composite
+del modelo ≈ 115; observado M1 = 114,01. El wedge es chico (< 1 USD/bbl) y
+$\theta_{\rm implícito} \approx +0{,}02$ — el mercado pricea **persistencia
+casi total** del shock, sin descontar resolución a corto plazo. El modelo
+ajusta bien al precio observado a esa fecha.
 
 **13.2. ¿Es alarmante el nivel actual?**
 No es señal de alarma de coordinación/run inmediata (estamos por encima del
@@ -542,7 +539,7 @@ Tres mensajes para cerrar:
 ## Apéndice B — Números clave para citar
 
 - **Stock IEA OMR al 30-abril-2026:** 7.951 mb (último reporte; vs. 8.150 mb en enero).
-- **Precio Brent observado al 30-abril-2026:** 124,24 USD/bbl (FRED DCOILBRENTEU) / 122,58 (Bloomberg M1).
+- **Brent M1 al 30-abril-2026:** 114,01 USD/bbl (Bloomberg constant-maturity). Nota: FRED DCOILBRENTEU (spot dated) reporta 124,24 ese día — atípica divergencia entre benchmarks; usamos M1 como canónico.
 - **$h_{\rm actual}$ (vía Ext 2):** ~0,43 (**por encima** de $h^\ast = 0{,}30$).
 - **$\dot R(h_{\rm actual})$:** ~4,7 mb/d (consistente con IEA OMR).
 - **$P_{\rm cap}$ del modelo:** ~191 USD/bbl ($h \to 0$).
@@ -551,6 +548,6 @@ Tres mensajes para cerrar:
 - **$P_R(h_{\rm actual})$:** ~147 USD/bbl.
 - **$q(h_{\rm actual})$:** ~0,05 (régimen clásico domina).
 - **Composite $P(h_{\rm actual})$:** ~115 USD/bbl.
-- **θ implícito al 30-abril:** ~−0,21 (wedge negativo; mercado pricea más severidad que el modelo).
+- **θ implícito al 30-abril:** ~+0,02 (wedge chico; modelo ajusta al observado).
 - **Margen sobre Stock_stress (7.600):** 351 mb (~75-90 días al ritmo actual).
 - **Margen sobre Stock_floor (6.800):** 1.151 mb (~9-10 meses al ritmo actual).

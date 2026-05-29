@@ -19,6 +19,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from scipy.optimize import brentq
+
 from .calibration import ModelParams
 from .core import P_classical, P_run, q_run
 
@@ -40,6 +42,48 @@ def h_from_stock(
 
 
 # ---------------------------------------------------------------------------
+# Demanda de reposición y P*(Stock) variable (Extensión 4)
+# Replicados de app.py para evitar import circular.
+# ---------------------------------------------------------------------------
+
+def replenishment_rate(
+    stock: float, stock_opt: float, stock_floor: float, R_repl_max: float,
+) -> float:
+    """Tasa de reposición lineal saturada (Ext 4)."""
+    if stock_opt <= stock_floor:
+        return 0.0
+    gap_norm = (stock_opt - stock) / (stock_opt - stock_floor)
+    return R_repl_max * max(0.0, min(1.0, gap_norm))
+
+
+def P_star_open(R_repl: float, params: ModelParams) -> float:
+    """Precio de equilibrio con Ormuz abierto + demanda de reposición."""
+    if R_repl <= 0:
+        return params.P_star
+
+    def f(P):
+        return (
+            params.D_0 * (P / params.P_star) ** (-params.eps_d) + R_repl
+            - params.D_0 * (P / params.P_star) ** params.eps_s
+        )
+
+    return brentq(f, 30, 2000)
+
+
+def p_star_at_stock(
+    stock: float, stock_opt: float | None, stock_floor: float,
+    R_repl_max: float | None, params: ModelParams,
+) -> float:
+    """Helper: si se proveen stock_opt y R_repl_max, retorna P*(Stock)
+    con demanda de reposición; sino, retorna params.P_star constante.
+    """
+    if stock_opt is None or R_repl_max is None:
+        return params.P_star
+    R = replenishment_rate(stock, stock_opt, stock_floor, R_repl_max)
+    return P_star_open(R, params)
+
+
+# ---------------------------------------------------------------------------
 # Cómputo puntual
 # ---------------------------------------------------------------------------
 
@@ -57,20 +101,27 @@ def theta_from_observation(
     stock_floor: float,
     stock_stress: float,
     params: ModelParams,
+    stock_opt: float | None = None,
+    R_repl_max: float | None = None,
 ) -> dict:
     """θ implícito y diagnósticos para una observación (P, Stock).
 
+    Si se proveen stock_opt y R_repl_max, usa P*(Stock) variable con demanda
+    de reposición (Ext 4) como denominador del despeje — consistente con la
+    métrica puntual del app. Sin esos parámetros, usa P* = 70 constante.
+
     Retorna:
-        dict con h, p_c, p_r, q, p_composite, theta, in_range.
+        dict con h, p_c, p_r, q, p_composite, p_star, theta, in_range.
     """
     h = h_from_stock(stock, stock_floor, stock_stress, params.h_star)
     p_c = P_classical(h, params)
     p_r = P_run(h, params)
     q = q_run(h, params)
     p_composite = (1.0 - q) * p_c + q * p_r
+    p_star = p_star_at_stock(stock, stock_opt, stock_floor, R_repl_max, params)
 
-    # Despeje de θ desde P_mercado = (1-θ)·P_modelo + θ·P*
-    denom = p_composite - params.P_star
+    # Despeje de θ desde P_mercado = (1-θ)·P_composite + θ·P*(Stock)
+    denom = p_composite - p_star
     if abs(denom) < 1e-9:
         theta = float("nan")
     else:
@@ -82,6 +133,7 @@ def theta_from_observation(
         "p_run": p_r,
         "q": q,
         "p_composite": p_composite,
+        "p_star": p_star,
         "theta": theta,
         "in_range": 0.0 <= theta <= 1.0,
     }
@@ -119,15 +171,19 @@ def theta_series(
     stock_stress: float,
     params: ModelParams,
     shock_start: Optional[pd.Timestamp] = None,
+    stock_opt: float | None = None,
+    R_repl_max: float | None = None,
 ) -> pd.DataFrame:
     """θ implícito a lo largo del tiempo desde series alineadas.
 
     prices_df: columnas ['date', 'price'].
     stocks_df: columnas ['date', 'stock_mb'] (mensual o cualquier frecuencia).
     shock_start: fechas anteriores se omiten (modelo no aplica pre-shock).
+    stock_opt, R_repl_max: si se proveen, el despeje de θ usa P*(Stock) variable
+        (Ext 4) en vez de P* = 70 constante — consistente con la métrica del app.
 
     Retorna DataFrame con columnas ['date', 'price', 'stock_mb', 'h',
-    'p_classical', 'p_run', 'q', 'p_composite', 'theta', 'in_range'].
+    'p_classical', 'p_run', 'q', 'p_composite', 'p_star', 'theta', 'in_range'].
     """
     df = prices_df.copy()
     df["date"] = pd.to_datetime(df["date"])
@@ -136,11 +192,9 @@ def theta_series(
     if shock_start is not None:
         df = df[df["date"] >= pd.Timestamp(shock_start)].reset_index(drop=True)
 
-    # Interpolación de stocks
     stocks_interp = interpolate_stocks(stocks_df, pd.DatetimeIndex(df["date"]))
     df["stock_mb"] = stocks_interp.values
 
-    # Cómputo por fila (vectorizable a futuro si hace falta velocidad)
     results = []
     for _, row in df.iterrows():
         r = theta_from_observation(
@@ -149,6 +203,8 @@ def theta_series(
             stock_floor=stock_floor,
             stock_stress=stock_stress,
             params=params,
+            stock_opt=stock_opt,
+            R_repl_max=R_repl_max,
         )
         results.append(r)
 
@@ -226,6 +282,8 @@ def theta_forward_extension(
     stock_stress: float,
     params,
     shift_months: int = 1,
+    stock_opt: float | None = None,
+    R_repl_max: float | None = None,
 ) -> pd.DataFrame:
     """Serie diaria de θ implícito extendido por maturity del forward curve,
     mapeada al calendario del M1 rolling (delivery shifteado `shift_months`).
@@ -270,7 +328,12 @@ def theta_forward_extension(
         q = q_run(h_T, params)
         composite = (1 - q) * p_c + q * p_r
 
-        denom = composite - params.P_star
+        # P*(Stock_T) variable si se proveen stock_opt y R_repl_max (Ext 4)
+        p_star_T = p_star_at_stock(
+            stock_T, stock_opt, stock_floor, R_repl_max, params,
+        )
+
+        denom = composite - p_star_T
         theta_val = (composite - float(r["price"])) / denom if abs(denom) > 1e-9 else float("nan")
         points.append((plot_date, theta_val))
 

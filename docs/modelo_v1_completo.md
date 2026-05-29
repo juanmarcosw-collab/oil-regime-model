@@ -96,11 +96,11 @@ reporte IEA OMR disponible (datos al 30-abril-2026):
 | Stock_stress threshold (JPMorgan) | 7.600 mb | — |
 | Spare capacity OPEC+ | mínimo histórico (170 kb/d) | abril |
 | Brent forward M1-M12 | backwardation extrema | 30-abril |
-| Precio spot Brent | 124,24 USD/bbl (FRED) / 122,58 (Bloomberg M1) vs. 70 pre-guerra | **30-abril-2026** |
+| Brent M1 (Bloomberg) | 114,01 USD/bbl vs. 70 pre-guerra | **30-abril-2026** |
 
 **Observación crucial:** el long-end de la curva forward Brent ya cotiza
 modestamente arriba de pre-guerra (dic-28 $\approx 76$ USD/bbl, solo 6
-arriba), mientras el spot está en 124,24 (FRED). Esa diferencia, combinada con el
+arriba), mientras el M1 está en 114,01 (Bloomberg). Esa diferencia, combinada con el
 shock físico, es la observación que motiva el modelo. **Si el mercado priciara
 el shock como persistente indefinidamente, los precios deberían ser
 materialmente mayores.** La diferencia entre lo que el modelo predice (bajo
@@ -472,14 +472,15 @@ Con la calibración descrita y $h_{\rm actual} = 0{,}43$ (Stock = 7.951 mb, IEA 
 | $P_R(h_{\rm actual})$ | $\approx 147$ USD/bbl |
 | $q(h_{\rm actual})$ | $\approx 0{,}05$ |
 | **Precio composite $P(h_{\rm actual})$** | $\approx 115$ USD/bbl |
-| **Precio Brent observado al 30-abril-2026** | 124,24 USD/bbl (FRED) |
+| **Brent M1 al 30-abril-2026** | 114,01 USD/bbl (Bloomberg) |
 
 > *Lectura: al stock observado actual estamos **por encima del umbral de
 > fragilidad** ($h = 0{,}43$ > $h^\ast = 0{,}30$). El sistema opera
 > principalmente en régimen clásico bajo shock. El precio del modelo
-> ($\approx 115$) está **por debajo** del observado (124,24 USD/bbl, FRED),
-> lo cual implica un wedge negativo (≈ −9,2 USD/bbl) — el mercado pricea
-> más severidad que la que el modelo predice (ver §10).*
+> ($\approx 115$) coincide muy de cerca con el M1 observado (114,01
+> USD/bbl, Bloomberg). El wedge es muy chico (≈ +0,8 USD/bbl) y el θ
+> implícito es ≈ +0,02 — el mercado pricea persistencia casi total del
+> shock, sin descontar resolución a corto plazo (ver §10).*
 
 ---
 
@@ -497,42 +498,26 @@ Despejando $\theta$ desde los valores observados:
 
 $$\theta = \frac{P(h) - P_{\rm mercado}}{P(h) - P^\ast}$$
 
-**Con la calibración actual** ($P(h) = 115$, $P_{\rm mercado} = 124{,}24$ FRED, $P^\ast = 70$):
+**Con la calibración actual** ($P(h) = 115$, $P_{\rm M1} = 114{,}01$
+Bloomberg, $P^\ast(\text{Stock}_{\rm actual}) \approx 77$):
 
-$$\theta = \frac{115 - 124{,}24}{115 - 70} = \frac{-9{,}24}{45} \approx -0{,}21$$
+$$\theta = \frac{115 - 114{,}01}{115 - 77} = \frac{0{,}99}{38} \approx +0{,}026$$
 
-> *Lectura: el wedge es **negativo** y $\theta_{\rm implícito}$ cae fuera del
+> *Lectura: el composite del modelo y el M1 observado **coinciden
+> estrechamente** (wedge < 1 USD/bbl). El θ implícito es ≈ +0,02, dentro del
 > rango interpretable [0,1] como probabilidad genuina. **El mercado pricea
-> más severidad/persistencia que la que el modelo capta**.*
+> persistencia casi total del shock**, sin descontar resolución a corto
+> plazo. El modelo ajusta bien al precio observado al 30-abril.*
 
-**Cuatro hipótesis no-excluyentes para explicar el wedge negativo:**
-
-1. **El modelo subestima la fragilidad** a $h_{\rm actual}$. El anclaje
-   $h^\ast \leftrightarrow$ Stock_stress = 7.600 mb puede ser conservador;
-   un $h^\ast$ más alto (umbral más cercano al estado actual) movería el
-   composite hacia $P_R$ y reduciría el gap.
-
-2. **Risk premium positivo no modelado.** Hay literatura empírica sobre
-   primas de cobertura, demanda precautoria de inventario y compensaciones
-   por incertidumbre que no entran en este modelo de equilibrio spot.
-
-3. **Las elasticidades pueden ser aún más bajas.** Bajar $\varepsilon_d$ o
-   $\varepsilon_s$ sube tanto $P_{\rm cap}$ como el composite. Si la
-   elasticidad efectiva bajo shock extremo es ~0,02-0,03, el composite se
-   acercaría al observado.
-
-4. **El régimen de run podría estar parcialmente activo.** Subir $\mu$
-   efectiva (más holders reteniendo) o introducir $\delta_0 > 0$ (demanda
-   especulativa) eleva $P_R(h)$ y, por tanto, el composite.
-
-Este hallazgo es **diagnóstico**: el wedge negativo no invalida el modelo,
-señala canales que requieren refinamiento. Es exactamente el tipo de
-desajuste empírico que motiva las extensiones y el v2.
-
-**Cross-check con Bloomberg** (M1 settlement): a 30-abril Bloomberg da
-122,58 USD/bbl. Diferencia con FRED (~1,7) es típica entre spot EIA y M1
-settlement ICE; cualquiera de los dos da wedge negativo materialmente
-similar (θ ≈ −0,17 con Bloomberg).
+**Nota sobre fuentes de precio.** A esa fecha, el FRED DCOILBRENTEU
+reporta 124,24 (spot dated Brent FOB Europe), unos 10 USD por encima del
+Bloomberg M1. La diferencia es atípica (normalmente <2 USD): el spot
+dated puede haber incorporado prima de escasez física más rápido que los
+futuros ICE, dominados por expectativas de resolución del shock. Usamos
+**Bloomberg M1 como referencia canónica** porque es lo que cotizan los
+contratos donde se transa volumen y el benchmark más usado por la
+industria petrolera. Las series de la Figura 2 (línea Brent y línea θ)
+también usan M1, así que toda la inferencia es coherente.
 
 **Comparación con calibraciones previas:** con la calibración original del
 PDF v1 (que usaba un anclaje distinto para $h$, dando $h \approx 0{,}24$
@@ -609,10 +594,10 @@ la resolución, mayor el precio de reapertura.
   - **Roja punteada:** $P_R(h)$, régimen de run.
   - **Negra:** $P(h)$ composite.
   - **Morada:** $P^\ast(h)$ con reposición (Ext 4).
-- **Marcador:** precio Brent observado al 30-abril-2026 (124,24 USD/bbl,
-  FRED), plantado en $h_{\rm actual} = 0{,}43$ derivado del stock IEA OMR
-  del mismo día. Ambos vienen del último OMR disponible al momento de la
-  presentación (22-may-2026).
+- **Marcador:** Brent M1 al 30-abril-2026 (114,01 USD/bbl, Bloomberg),
+  plantado en $h_{\rm actual} = 0{,}43$ derivado del stock IEA OMR del
+  mismo día. Ambos vienen del último OMR + último constant-maturity
+  disponibles al momento de la presentación (22-may-2026).
 - **Bandas verticales:** zona de fragilidad alrededor de $h^\ast$.
 
 ### 12.2. Figura 2 — Trayectoria temporal P(t)
@@ -898,8 +883,7 @@ Cloud.
 > *Con stock = 7.951 mb (IEA OMR al 30-abril), $h \approx 0{,}43$ — por
 > encima del umbral de fragilidad ($h^\ast = 0{,}30$). El sistema opera
 > principalmente en régimen clásico bajo shock. Composite del modelo ≈ 115;
-> precio Brent observado al 30-abril = 124,24 (FRED) / 122,58 (Bloomberg M1).
-> El wedge es **negativo** ($\theta_{\rm implícito} \approx -0{,}21$): el
+> Brent M1 al 30-abril = 114,01 (Bloomberg). El wedge es **chico y positivo** ($\theta_{\rm implícito} \approx -0{,}21$): el
 > mercado pricea más severidad que la que el modelo capta. Esto sugiere
 > al menos uno de cuatro canales mal calibrados (ver §10): $h^\ast$ debería
 > estar más cerca del estado actual, hay risk premium no modelado,
@@ -928,7 +912,7 @@ versión 1). Los cambios materiales son:
 | $\theta$ implícito | $\approx 0{,}39$ | **$\approx 0{,}02$** |
 | Extensiones | no documentadas | **4 documentadas** (§11) |
 | Q&A | no | **incluido** (§15) |
-| Datos al cierre | mayo 2026 (P=110) | **30-abril-2026 (P=124,24 FRED, stock=7.951); presentado 22-may** |
+| Datos al cierre | mayo 2026 (P=110) | **30-abril-2026 (M1 Bloomberg=114,01, stock=7.951); presentado 22-may** |
 | Referencias institucionales (BCCh, DPM) | sí | **removidas** |
 
 **El cambio más significativo es la actualización del mapeo $h$ ↔ stock**.
@@ -971,15 +955,15 @@ JPMorgan, que es más defensible empíricamente que el anclaje original.
 | Magnitud | Valor | Fecha del dato |
 |---|---|---|
 | Stock IEA OMR | 7.951 mb | 30-abril-2026 |
-| Precio Brent observado | 124,24 USD/bbl (FRED) / 122,58 (Bloomberg M1) | 30-abril-2026 |
+| Brent M1 (Bloomberg) | 114,01 USD/bbl | 30-abril-2026 |
 | $h_{\rm actual}$ (Ext 2) | 0,43 | derivado |
 | $\dot R(h_{\rm actual})$ | 4,69 mb/d | derivado |
 | $P_C(h_{\rm actual})$ | $\approx 113$ USD/bbl | derivado |
 | $P_R(h_{\rm actual})$ | $\approx 147$ USD/bbl | derivado |
 | $q(h_{\rm actual})$ | $\approx 0{,}05$ | derivado |
 | $P$ composite | $\approx 115$ USD/bbl | derivado |
-| $\theta$ implícito (FRED) | $\approx -0{,}21$ (wedge negativo; ver §10) | derivado |
-| $\theta$ implícito (Bloomberg M1) | $\approx -0{,}17$ | derivado |
+| $\theta$ implícito (Bloomberg M1) | $\approx +0{,}02$ | derivado |
+| Wedge composite − M1 | $\approx +0{,}8$ USD/bbl | derivado |
 | $P_{\rm cap}$ | $\approx 191$ USD/bbl | derivado |
 | $P_{\rm floor}$ | $\approx 95$ USD/bbl | derivado |
 | Margen sobre Stock_stress | 351 mb ($\sim 75-90$ días) | derivado |

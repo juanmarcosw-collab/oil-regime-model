@@ -165,10 +165,53 @@ R_repl_max = st.sidebar.slider(
 )
 
 st.sidebar.subheader("Observación de mercado")
-P_observed = st.sidebar.slider(
-    "P observado (USD/bbl)", 60.0, 200.0, 124.24, 0.5,
-    help="Precio Brent observado al 30 de abril 2026."
-)
+
+# P_observed se autopopula desde el M1 (Bloomberg constant_maturity) al último
+# día del mes OMR elegido. Esto garantiza coherencia con la línea θ histórica
+# de Figura 2, que también usa M1 (no FRED spot).
+_m1_lookup: pd.Series | None = None
+try:
+    from model.data_loader import load_master_constant_maturity
+    _cm_full = load_master_constant_maturity()
+    _m1_lookup = pd.Series(
+        _cm_full["M1"].astype(float).values,
+        index=pd.to_datetime(_cm_full["observation_date"]),
+    ).dropna()
+except Exception:
+    pass
+
+P_observed = 114.01  # fallback razonable (M1 al 30-abril-2026)
+_p_obs_date = None
+if _m1_lookup is not None and len(_omr_dates) > 0:
+    # Buscar el último M1 disponible dentro del mes elegido del dropdown
+    target_period = pd.Period(chosen_omr_month)
+    same_month = _m1_lookup[_m1_lookup.index.to_period("M") == target_period]
+    if len(same_month) > 0:
+        _p_obs_date = same_month.index[-1]
+        P_observed = float(same_month.iloc[-1])
+    else:
+        # Si el mes elegido no tiene M1 (e.g., 2021), tomar el último anterior
+        earlier = _m1_lookup[_m1_lookup.index.to_period("M") <= target_period]
+        if len(earlier) > 0:
+            _p_obs_date = earlier.index[-1]
+            P_observed = float(earlier.iloc[-1])
+
+if _p_obs_date is not None:
+    st.sidebar.caption(
+        f"Brent M1 al {_p_obs_date.strftime('%d-%b-%Y')}: "
+        f"**{P_observed:.2f} USD/bbl**"
+    )
+else:
+    st.sidebar.caption(f"Brent M1 (fallback): **{P_observed:.2f} USD/bbl**")
+with st.sidebar.expander("Override manual del precio observado", expanded=False):
+    P_observed = st.slider(
+        "P observado (USD/bbl)", 60.0, 200.0, P_observed, 0.5,
+        help=(
+            "Por default precarga el M1 (Bloomberg) del mes OMR elegido. "
+            "Usalo solo para análisis hipotéticos."
+        ),
+    )
+
 theta_user = st.sidebar.slider(
     "θ (prob. de normalización futura)", 0.0, 1.0, 0.30, 0.01,
     help=(
@@ -333,6 +376,8 @@ if inference_source != "Ninguna":
                 stock_stress=stock_stress,
                 params=params,
                 shock_start="2026-02-12",
+                stock_opt=stock_opt,
+                R_repl_max=R_repl_max,
             )
             if "forwards_long" in _data and len(_data["forwards_long"]) > 0:
                 _latest_snap = (
@@ -348,6 +393,8 @@ if inference_source != "Ninguna":
                         stock_floor=stock_floor,
                         stock_stress=stock_stress,
                         params=params,
+                        stock_opt=stock_opt,
+                        R_repl_max=R_repl_max,
                     )
                 except Exception:
                     theta_forward_ext_df = None
@@ -494,9 +541,9 @@ SERIES_DEFAULTS_TP = {
     "brent_fwd":  {"color": "#C2410C", "linestyle": ":",  "linewidth": 1.6,
                    "label": "Brent forward (curva últ. snapshot)"},
     "theta_spot": {"color": "#5E35B1", "linestyle": "-",  "linewidth": 1.6,
-                   "label": "θ implícito (spot)"},
+                   "label": "θ implícito (M1 histórico)"},
     "theta_fwd":  {"color": "#5E35B1", "linestyle": ":",  "linewidth": 1.4,
-                   "label": "θ implícito (forward)"},
+                   "label": "θ implícito (forward curve)"},
 }
 
 STOCK_DEFAULTS = dict(
@@ -1036,7 +1083,7 @@ def customize_and_export(
                     ("__sep_empiric", None),  # separador visual
                     ("brent_obs", "Brent observado"),
                     ("brent_fwd", "Brent forward"),
-                    ("theta_spot", "θ implícito (spot)"),
+                    ("theta_spot", "θ implícito (M1)"),
                     ("theta_fwd", "θ implícito (forward)"),
                 ]
             for s_key, s_label in series_labels:

@@ -594,7 +594,7 @@ de tiempo.
 Pendiente de poblamiento con datos al cierre. Estimaciones tentativas:
 
 - Stock_0 = 7.951 mb (IEA OMR al 30-abril-2026, último reporte).
-- P_observado = 124,24 USD/bbl (FRED DCOILBRENTEU) / 122,58 (Bloomberg M1) al 30-abril-2026.
+- P_observado = 114,01 USD/bbl (Bloomberg M1 constant-maturity) al 30-abril-2026.
 - E[T]_consensus ≈ ?  (extraer del Bloomberg survey de mayo).
 - σ_T ≈ ?  (extraer de dispersión de surveys, o usar default CV = 0,5).
 - E[T]_implícito = ?  (resolver con la calibración inversa).
