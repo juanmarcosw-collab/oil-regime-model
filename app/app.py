@@ -63,8 +63,8 @@ eps_d = st.sidebar.slider(
     help="Elasticidad short-run de demanda (default: 0,05; Caldara et al. 2019: 0,08-0,20)."
 )
 eps_s = st.sidebar.slider(
-    "ε_s (elasticidad de oferta)", 0.01, 0.30, 0.05, 0.01,
-    help="Elasticidad short-run de oferta (default: 0,05)."
+    "ε_s (elasticidad de oferta)", 0.01, 0.30, 0.04, 0.01,
+    help="Elasticidad short-run de oferta (default: 0,04, coherente con docs)."
 )
 
 st.sidebar.subheader("Función de release")
@@ -111,11 +111,8 @@ except Exception as _exc:
     st.sidebar.warning(f"No pude cargar stocks IEA OMR: {_exc}")
 
 if _omr_dates:
-    # Default: 2026-02 (inicio del shock); fallback al último mes disponible.
-    if "2026-02" in _omr_dates:
-        _default_idx = _omr_dates.index("2026-02")
-    else:
-        _default_idx = len(_omr_dates) - 1
+    # Default: último mes disponible (OMR más reciente).
+    _default_idx = len(_omr_dates) - 1
     chosen_omr_month = st.sidebar.selectbox(
         "Fecha OMR (mensual)", options=_omr_dates, index=_default_idx,
         help=(
@@ -203,14 +200,10 @@ if _p_obs_date is not None:
     )
 else:
     st.sidebar.caption(f"Brent M1 (fallback): **{P_observed:.2f} USD/bbl**")
-with st.sidebar.expander("Override manual del precio observado", expanded=False):
-    P_observed = st.slider(
-        "P observado (USD/bbl)", 60.0, 200.0, P_observed, 0.5,
-        help=(
-            "Por default precarga el M1 (Bloomberg) del mes OMR elegido. "
-            "Usalo solo para análisis hipotéticos."
-        ),
-    )
+# Sin override manual: P_observed = M1 lookup automático.
+# Razón: cualquier widget editable (slider, number_input) cachea state en
+# session_state del navegador y puede entrar en conflicto con el lookup.
+# Para análisis hipotéticos, modificar el código directamente.
 
 theta_user = st.sidebar.slider(
     "θ (prob. de normalización futura)", 0.0, 1.0, 0.30, 0.01,
@@ -456,14 +449,37 @@ def _rhs_stock(t, y, params, stock_floor, stock_stress, h_star):
     return [-release_rate(h, params)]
 
 
-sol = solve_ivp(
-    _rhs_stock, [0, horizon_days], [stock_actual],
-    args=(params, stock_floor, stock_stress, h_star),
-    max_step=2.0, dense_output=True,
-)
+# Construcción de la trayectoria de stock para la Figura 2:
+# - Para fechas ≤ último OMR observado: interpolación lineal de los datos
+#   reales (mensual → diario).
+# - Para fechas > último OMR: ODE de drenaje proyectada desde ese punto.
+# Esto asegura coherencia con la línea θ histórica (que usa la misma lógica
+# vía interpolate_stocks) y con la Figura 3.
+dates_t = pd.date_range(t_obs_date, t_obs_date + pd.Timedelta(days=horizon_days), freq="D")
+t_days = np.arange(len(dates_t), dtype=float)
 
-t_days = np.linspace(0, horizon_days, 366)
-stock_t = sol.sol(t_days)[0]
+_use_observed_for_curve = False
+try:
+    from model.data_loader import load_master_stocks
+    from model.inference import interpolate_stocks as _interp_stocks
+    _stocks_all = load_master_stocks()
+    stock_t = _interp_stocks(
+        _stocks_all, dates_t,
+        params=params, stock_floor=stock_floor, stock_stress=stock_stress,
+    ).values.astype(float)
+    _use_observed_for_curve = True
+except Exception:
+    pass
+
+if not _use_observed_for_curve:
+    # Fallback: ODE pura desde t_obs_date con stock=stock_actual (legacy)
+    sol = solve_ivp(
+        _rhs_stock, [0, horizon_days], [stock_actual],
+        args=(params, stock_floor, stock_stress, h_star),
+        max_step=2.0, dense_output=True,
+    )
+    stock_t = sol.sol(t_days)[0]
+
 h_t = np.array([h_from_stock(s, stock_floor, stock_stress, h_star) for s in stock_t])
 h_t_safe = np.maximum(h_t, 1e-4)
 
@@ -478,8 +494,7 @@ P_star_open_t = np.array([P_star_open(r, params) for r in R_repl_t])
 
 P_expected_t = (1 - theta_user) * P_t + theta_user * P_star_open_t
 
-dates_t = [t_obs_date + timedelta(days=int(d)) for d in t_days]
-
+# `dates_t` ya fue computado arriba al construir la grilla temporal.
 
 # --- Helpers: defaults de textos por figura ---
 
@@ -1454,8 +1469,14 @@ with col2:
     st.markdown("##### Wedge modelo vs observado")
     small_metric(
         "θ implícito",
-        f"{theta:.2f}",
+        f"{theta:.3f}",
         delta=f"(Wedge: ${P_model_actual - P_observed:+.1f})",
+    )
+    st.caption(
+        f"Desglose: $P_{{\\rm composite}}(h={h_actual:.2f})$ = "
+        f"${P_model_actual:.2f}$ — $P_{{\\rm M1}}$ = ${P_observed:.2f}$ "
+        f"sobre $P_{{\\rm composite}} - P^{{\\ast}}(\\text{{Stock}})$ = "
+        f"${P_model_actual - P_star_open_actual:.2f}$."
     )
 
 
@@ -1520,6 +1541,101 @@ with colT2:
                  delta=f"({stock_t[-1] - stock_actual:+.0f} mb)")
     small_metric("Precio composite", f"${P_t[-1]:.1f}/bbl",
                  delta=f"({P_t[-1] - P_t[0]:+.1f})")
+
+
+# --- Inspector por fecha (Figura 2) ---
+
+if (theta_overlay_df is not None) or (brent_observed_df is not None) or \
+   (brent_forward_ext_df is not None):
+    with st.expander("🔎 Inspector por fecha (lookup de valores)", expanded=False):
+        st.caption(
+            "Elegí una fecha para ver los valores exactos de cada serie. "
+            "Útil para verificar cómputos puntuales (M1, composite, P*, θ)."
+        )
+
+        # Rango de fechas disponibles según las series cargadas
+        _all_dates = []
+        if brent_observed_df is not None and len(brent_observed_df) > 0:
+            _all_dates += list(brent_observed_df["date"])
+        if brent_forward_ext_df is not None and len(brent_forward_ext_df) > 0:
+            _all_dates += list(brent_forward_ext_df["date"])
+        if theta_overlay_df is not None and len(theta_overlay_df) > 0:
+            _all_dates += list(theta_overlay_df["date"])
+
+        if _all_dates:
+            _min_d = min(_all_dates).date()
+            _max_d = max(_all_dates).date()
+            # Default: último día con M1 observado (o cualquiera disponible)
+            if brent_observed_df is not None and len(brent_observed_df) > 0:
+                _default = brent_observed_df["date"].iloc[-1].date()
+            else:
+                _default = _max_d
+
+            chosen_date = st.date_input(
+                "Fecha a inspeccionar", value=_default,
+                min_value=_min_d, max_value=_max_d,
+                key="tp_inspector_date",
+            )
+
+            chosen_ts = pd.Timestamp(chosen_date)
+
+            def _value_at(df, col):
+                """Toma el valor de `col` en la fecha más cercana (≤) a chosen_ts."""
+                if df is None or len(df) == 0:
+                    return None
+                rows = df[df["date"] <= chosen_ts]
+                if len(rows) == 0:
+                    return None
+                return float(rows[col].iloc[-1])
+
+            m1_val = _value_at(brent_observed_df, "price")
+            fwd_val = _value_at(brent_forward_ext_df, "price")
+            theta_h = _value_at(theta_overlay_df, "theta")
+            comp_h = _value_at(theta_overlay_df, "p_composite")
+            pstar_h = _value_at(theta_overlay_df, "p_star")
+            stock_h = _value_at(theta_overlay_df, "stock_mb")
+            h_h = _value_at(theta_overlay_df, "h")
+
+            # Precio a usar para la columna "Brent": M1 si la fecha está dentro
+            # del rango observado; sino forward.
+            last_obs = (
+                brent_observed_df["date"].iloc[-1]
+                if brent_observed_df is not None and len(brent_observed_df) > 0
+                else None
+            )
+            if last_obs is not None and chosen_ts > last_obs and fwd_val is not None:
+                brent_val = fwd_val
+                brent_label = "Brent forward (interp)"
+            else:
+                brent_val = m1_val
+                brent_label = "Brent M1 (Bloomberg)"
+
+            cInsp1, cInsp2 = st.columns(2)
+            with cInsp1:
+                st.markdown("**Mercado observado:**")
+                if brent_val is not None:
+                    st.markdown(f"- {brent_label}: **${brent_val:.2f}**")
+                if m1_val is not None and fwd_val is not None and brent_val == fwd_val:
+                    st.markdown(f"- (M1 al último día obs.: ${m1_val:.2f})")
+            with cInsp2:
+                st.markdown("**Modelo a esa fecha:**")
+                if stock_h is not None:
+                    st.markdown(f"- Stock: **{stock_h:.0f} mb**")
+                if h_h is not None:
+                    st.markdown(f"- h: **{h_h:.3f}**")
+                if comp_h is not None:
+                    st.markdown(f"- P_composite: **${comp_h:.2f}**")
+                if pstar_h is not None:
+                    st.markdown(f"- P*(Stock): **${pstar_h:.2f}**")
+
+            if theta_h is not None and comp_h is not None and brent_val is not None:
+                wedge = comp_h - brent_val
+                st.markdown("---")
+                st.markdown(
+                    f"**θ implícito a {chosen_date.strftime('%d-%b-%Y')}: "
+                    f"{theta_h:+.4f}**  "
+                    f"(wedge composite − Brent = ${wedge:+.2f})"
+                )
 
 
 # --- Layout: Figura — Term structure de θ desde forward curve ---

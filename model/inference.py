@@ -146,22 +146,77 @@ def theta_from_observation(
 def interpolate_stocks(
     stocks_df: pd.DataFrame,
     target_dates: pd.DatetimeIndex,
+    params: "ModelParams | None" = None,
+    stock_floor: float | None = None,
+    stock_stress: float | None = None,
 ) -> pd.Series:
-    """Interpola linealmente la serie de stocks hacia las target_dates.
+    """Construye la serie de stocks evaluada en target_dates.
 
-    stocks_df debe tener columnas ['date', 'stock_mb']. target_dates fuera del
-    rango se rellenan con el extremo más cercano (extrapolación flat).
+    Para fechas ≤ último OMR observado: interpolación lineal temporal entre
+    puntos mensuales (y bfill para fechas anteriores al primero).
+
+    Para fechas > último OMR: si se proveen `params`, `stock_floor` y
+    `stock_stress`, proyecta con la ODE del modelo
+    ``dStock/dt = -dot_R(h(Stock))`` desde el último valor OMR observado
+    (coherente con la Figura 3 y la curva negra de la Figura 2). Si no se
+    proveen, fallback a extrapolación flat (ffill) preservando el comportamiento
+    anterior.
+
+    stocks_df debe tener columnas ['date', 'stock_mb'].
     """
     stocks_df = stocks_df.copy()
     stocks_df["date"] = pd.to_datetime(stocks_df["date"])
     stocks_df = stocks_df.sort_values("date").set_index("date")
 
-    # Reindexa al union de fechas y luego interpola
-    all_dates = stocks_df.index.union(target_dates).sort_values()
-    s = stocks_df["stock_mb"].reindex(all_dates).interpolate(method="time")
-    # Extrapolación flat al final y al inicio
-    s = s.bfill().ffill()
-    return s.reindex(target_dates)
+    last_omr_date = stocks_df.index[-1]
+    last_omr_stock = float(stocks_df["stock_mb"].iloc[-1])
+
+    target_dates = pd.DatetimeIndex(target_dates)
+    past_or_equal = target_dates[target_dates <= last_omr_date]
+    future = target_dates[target_dates > last_omr_date]
+
+    # --- Fechas <= último OMR: interpolación lineal del dato observado ---
+    if len(past_or_equal) > 0:
+        all_dates = stocks_df.index.union(past_or_equal).sort_values()
+        s_obs = stocks_df["stock_mb"].reindex(all_dates).interpolate(method="time")
+        s_obs = s_obs.bfill()  # fechas anteriores al primer OMR
+        s_obs = s_obs.reindex(past_or_equal)
+    else:
+        s_obs = pd.Series(dtype=float, index=pd.DatetimeIndex([]))
+
+    # --- Fechas > último OMR: proyección por ODE o ffill ---
+    if len(future) > 0:
+        use_ode = (
+            params is not None and stock_floor is not None and stock_stress is not None
+        )
+        if use_ode:
+            from scipy.integrate import solve_ivp
+            from .core import release_rate
+
+            def rhs(t, y):
+                stock = max(y[0], stock_floor + 1.0)
+                h = max(
+                    h_from_stock(stock, stock_floor, stock_stress, params.h_star),
+                    1e-4,
+                )
+                return [-release_rate(h, params)]
+
+            t_eval = np.array(
+                [(d - last_omr_date).total_seconds() / 86400.0 for d in future],
+                dtype=float,
+            )
+            max_t = float(t_eval.max()) + 1.0
+            sol = solve_ivp(
+                rhs, [0.0, max_t], [last_omr_stock],
+                t_eval=t_eval, rtol=1e-6, atol=1e-3,
+            )
+            s_future = pd.Series(sol.y[0], index=future)
+        else:
+            s_future = pd.Series([last_omr_stock] * len(future), index=future)
+    else:
+        s_future = pd.Series(dtype=float, index=pd.DatetimeIndex([]))
+
+    return pd.concat([s_obs, s_future]).reindex(target_dates)
 
 
 def theta_series(
@@ -192,7 +247,13 @@ def theta_series(
     if shock_start is not None:
         df = df[df["date"] >= pd.Timestamp(shock_start)].reset_index(drop=True)
 
-    stocks_interp = interpolate_stocks(stocks_df, pd.DatetimeIndex(df["date"]))
+    # Pasamos params, floor y stress para que despues del ultimo OMR el
+    # stock se proyecte con la ODE (coherente con la curva negra de Fig 2
+    # y con la Fig 3); para fechas pasadas usa interpolacion lineal del dato.
+    stocks_interp = interpolate_stocks(
+        stocks_df, pd.DatetimeIndex(df["date"]),
+        params=params, stock_floor=stock_floor, stock_stress=stock_stress,
+    )
     df["stock_mb"] = stocks_interp.values
 
     results = []
